@@ -3,7 +3,7 @@
 
 ## 🎯 Motivation & Hintergrund
 
-Die offizielle, in ESPHome integrierte `hx711`-Komponente stößt bei komplexeren Projekten schnell an ihre Grenzen. Sie ist strukturell **starr und unflexibel**: Ein einzelner Sensor-Eintrag kann im YAML-Standard immer nur exakt einen Kanal auslesen (Kanal A *oder* Kanal B). Möchte man beide Kanäle nutzen, ist man gezwungen, zwei separate Instanzen anzulegen, die sich auf Hardware-Ebene beim Bit-Banging und der Taktung gegenseitig blockieren oder im schlechtesten Fall den HX711-Chip in unvorhersehbare Zustände versetzen.
+Die offizielle, in ESPHome integrierte `hx711`-Komponente stößt bei komplexeren Projekten schnell an ihre Grenzen. Sie ist strukturell **starr und unflexibel**: Ein einzelner Sensor-Eintrag kann im YAML-Standard immer nur exakt einen Kanal auslesen (Kanal A *oder* Kanal B). Es ist **nicht** möglich, beide Kanäle zu nutzen, indem man zwei separate Instanzen anlegt, da beide die selben Pins nutzen müßten, was durch die Validierung verhindert wird.
 
 Zudem neigen reine Software-Bit-Banging-Lösungen in modernen ESPHome-Setups zu massiven Messwert-Ausreißern, wenn im Hintergrund hochfrequente serielle Protokolle laufen (z. B. Modbus-Abfragen von JK-BMS, Daly-BMS oder Victron-Geräten). Die dortigen Software-Interrupts zerreißen das empfindliche Timing des HX711-Takts.
 
