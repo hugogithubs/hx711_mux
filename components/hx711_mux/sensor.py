@@ -1,13 +1,12 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
+import esphome.core as core
 from esphome.components import sensor, button
 from esphome.const import (
     CONF_ID,
     CONF_CHANNEL,
     CONF_NAME,
     CONF_TYPE,
-    ICON_SCALE_BALANCE,
-    ICON_WEIGHT_KILOGRAM,
     STATE_CLASS_MEASUREMENT,
 )
 
@@ -20,24 +19,39 @@ HX711MuxSumSensor = hx711_mux_ns.class_("HX711MuxSumSensor", sensor.Sensor, cg.C
 CONF_HUB_ID = "hub_id"
 CONF_TRACKS = "tracks"
 
-# Das primäre SENSOR_SCHEMA (Muss flach sein für den Core-Validator!)
-CONFIG_SCHEMA = sensor.sensor_schema(
-    icon=ICON_WEIGHT_KILOGRAM,
-    state_class=STATE_CLASS_MEASUREMENT,
-).extend(
+# MULTI-TYP-SCHEMA: Unterscheidet anhand von "type" schon bei der Validierung den C++ Typen!
+CONFIG_SCHEMA = cv.typed_schema(
     {
-        cv.GenerateID(): cv.declare_id(HX711MuxSensor),
-        cv.Optional(CONF_HUB_ID): cv.use_id(HX711MuxHub),
-        cv.Optional(CONF_CHANNEL): cv.one_of("A", "B", upper=True),
-        cv.Optional(CONF_TRACKS): cv.ensure_list(cv.use_id(HX711MuxSensor)),
-        cv.Optional(CONF_TYPE, default="cell"): cv.one_of("cell", "sum"),
-    }
-).extend(cv.COMPONENT_SCHEMA)
+        # Typ 1: Normale Wägezelle (Standard)
+        "cell": sensor.sensor_schema(
+            HX711MuxSensor,
+            icon="mdi:weight-kilogram",
+            state_class=STATE_CLASS_MEASUREMENT,
+        ).extend(
+            {
+                cv.Required(CONF_HUB_ID): cv.use_id(HX711MuxHub),
+                cv.Required(CONF_CHANNEL): cv.one_of("A", "B", upper=True),
+            }
+        ).extend(cv.COMPONENT_SCHEMA),
+        
+        # Typ 2: Der synchrone Summensensor
+        "sum": sensor.sensor_schema(
+            HX711MuxSumSensor, # <-- Hier erfährt der Builder sofort den richtigen C++ Typen!
+            icon="mdi:weight-kilogram",
+            state_class=STATE_CLASS_MEASUREMENT,
+        ).extend(
+            {
+                cv.Required(CONF_TRACKS): cv.ensure_list(cv.use_id(HX711MuxSensor)),
+            }
+        ).extend(cv.COMPONENT_SCHEMA),
+    },
+    default_type="cell",
+)
 
 async def to_code(config):
-    # FALL 1: Es ist ein Summen-Sensor
-    if config[CONF_TYPE] == "sum" or CONF_TRACKS in config:
-        var = cg.new_PComponent(HX711MuxSumSensor, config[CONF_ID])
+    # Fall 1: Summen-Sensor
+    if config[cv.CONF_TYPE] == "sum":
+        var = cg.new_Pvariable(config[CONF_ID])
         await cg.register_component(var, config)
         await sensor.register_sensor(var, config)
         
@@ -46,8 +60,8 @@ async def to_code(config):
             cg.add(var.add_sensor(tracker))
         return
 
-    # FALL 2: Es ist eine normale Wägezelle
-    var = cg.new_PComponent(HX711MuxSensor, config[CONF_ID])
+    # Fall 2: Normale Wägezelle
+    var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     await sensor.register_sensor(var, config)
     
@@ -58,12 +72,21 @@ async def to_code(config):
     channel = 0 if config[CONF_CHANNEL] == "A" else 1
     cg.add(var.set_channel(channel))
 
-    # Button automatisch erzeugen
-    button_id = config[CONF_ID] + "_tare_button"
-    btn = cg.new_PComponent(HX711MuxTareButton, button_id)
-    await cg.register_component(btn, {})
+    # Erzeugt das ID-Objekt für den Button
+    button_id = core.ID(
+        f"{config[CONF_ID]}_tare_button", 
+        is_declaration=True, 
+        type=HX711MuxTareButton
+    )
     
-    cg.add(btn.set_name(f"{config[CONF_NAME]} Tarieren"))
-    cg.add(btn.set_icon(ICON_SCALE_BALANCE))
-    cg.add(btn.set_sensor(var))
-    await button.register_button(btn, {})
+    btn_var = cg.new_Pvariable(button_id)
+    
+    button_schema = button.button_schema(HX711MuxTareButton)
+    button_config = button_schema({
+        CONF_ID: button_id,
+        CONF_NAME: f"{config[CONF_NAME]} Tarieren",
+        "icon": "mdi:scale-balance",
+    })
+    
+    cg.add(btn_var.set_sensor(var))
+    await button.register_button(btn_var, button_config)
