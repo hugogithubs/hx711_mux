@@ -149,11 +149,33 @@ sensor:
             - 2730 -> 0.22100  # Individueller Faktor für Zelle 4
 
   # ------------------------------------------------------------------
-  # SYNCHRONER SUMMEN-SENSOR (Berechnet das absolute Gesamtgewicht)
+  # DREI SYNCHRONE SUMMEN-SENSOREN GLEICHZEITIG (PARALLEL)
   # ------------------------------------------------------------------
+  
+  # Summe 1: Nur die Zellen von Board 1 (Kanal A + Kanal B)
   - platform: hx711_mux
     type: sum
-    name: "Zellen Gesamtgewicht (4 Zellen)"
+    name: "Gewicht Achse 1 (Board 1)"
+    id: summe_achse_1
+    accuracy_decimals: 5
+    tracks:
+      - zelle_1_b1_ka
+      - zelle_2_b1_kb
+
+  # Summe 2: Nur die Zellen von Board 2 (Kanal A + Kanal B)
+  - platform: hx711_mux
+    type: sum
+    name: "Gewicht Achse 2 (Board 2)"
+    id: summe_achse_2
+    accuracy_decimals: 5
+    tracks:
+      - zelle_3_b2_ka
+      - zelle_4_b2_kb
+
+  # Summe 3: Das absolute Gesamtgewicht über alle 4 Sensoren parallel
+  - platform: hx711_mux
+    type: sum
+    name: "Cell Compression Gesamtgewicht (Alle 4 Zellen)"
     id: waage_gesamtgewicht
     accuracy_decimals: 5
     tracks:
@@ -161,6 +183,7 @@ sensor:
       - zelle_2_b1_kb
       - zelle_3_b2_ka
       - zelle_4_b2_kb
+
 ```
 
 ---
