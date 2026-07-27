@@ -23,12 +23,8 @@ Ein typisches Szenario für den Einsatz dieser Komponente ist die mechanische Ü
 *   **Der Clou:** Obwohl das ESP32-Board zeitgleich über Modbus im Millisekundentakt hunderte Datenwerte (Zellspannungen, Ströme, Temperaturen) aus dem JK-BMS ausliest, bleibt die Druckmessung der Waage absolut stabil, zappelfrei und liefert bei Entlastung per Knopfdruck eine perfekte Nullkurve.
 
 
-
-
-
 Eine hochperformante, native C++ Erweiterung für ESPHome zur synchronisierten Auslesung beider Kanäle (Kanal A & Kanal B) eines oder mehrerer HX711-Wägezellen-Verstärker. 
 
-Diese Komponente wurde speziell für anspruchsvolle Umgebungen entwickelt, in denen hochfrequente serielle Protokolle (wie Modbus-Abfragen von JK-BMS, Daly-BMS oder Victron-Geräten) herkömmliche Software-Bit-Banging-Methoden stören und zu Messwert-Ausreißern führen würden.
 
 ## ✨ Features & Was dich erwartet
 
