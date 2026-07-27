@@ -9,7 +9,6 @@
 #include <vector>
 #include <map>
 
-// Wichtig für den Interrupt-Schutz auf dem ESP32
 #ifdef USE_ESP32
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -22,7 +21,7 @@ static const char *const TAG = "hx711_mux";
 class HX711MuxSensor;
 
 // ====================================================================
-// 1. DER HARDWARE-HUB (Das HX711-Board mit Bit-Banging)
+// 1. DER HARDWARE-HUB
 // ====================================================================
 class HX711MuxHub : public Component {
  public:
@@ -32,17 +31,13 @@ class HX711MuxHub : public Component {
 
   void setup() override {
     ESP_LOGI(TAG, "Initialisiere HX711 Mux Board GPIOs...");
-    // Nutzt das native ESPHome-Setup für Pins (setzt Richtungen INPUT/OUTPUT automatisch)
     clk_pin_->setup();
     dout_pin_->setup();
-    
-    // Initialen Pegel für den Takt sicher auf LOW setzen (On-Boot Schutz)
     clk_pin_->digital_write(false);
     active_channel_ = 0; 
   }
 
   void loop() override {
-    // Intervall-Steuerung: Liest die Hardware jede Sekunde im Haupt-Loop aus
     uint32_t now = millis();
     if (now - last_read_ > 1000) {
       last_read_ = now;
@@ -51,70 +46,7 @@ class HX711MuxHub : public Component {
   }
 
  protected:
-  void read_hardware_() {
-    if (dout_pin_->digital_read() == 1) {
-      // Warten auf Data Ready mit Timeout (max 250ms)
-      uint32_t wait_start = millis();
-      while (dout_pin_->digital_read() == 1) {
-        if (millis() - wait_start > 250) {
-          // Timeout-Behandlung (Reset-Puls >60µs)
-          clk_pin_->digital_write(true);
-          delayMicroseconds(70);
-          clk_pin_->digital_write(false);
-          delayMicroseconds(10);
-          active_channel_ = 0; 
-          ESP_LOGW(TAG, "Timeout beim Warten auf Data Ready!");
-          return;
-        }
-        delay(1);
-      }
-    }
-
-    long value = 0;
-
-    // KRITISCHER BEREICH: Interrupt-Schutz nur aktivieren, wenn wir auf einem ESP32 laufen
-#ifdef USE_ESP32
-    static portMUX_TYPE myMutex = portMUX_INITIALIZER_UNLOCKED;
-    portENTER_CRITICAL(&myMutex);
-#endif
-
-    // Die 24 Datenbits takten und einlesen
-    for (int i = 0; i < 24; i++) {
-      clk_pin_->digital_write(true);
-      delayMicroseconds(1);
-      value = (value << 1) | (dout_pin_->digital_read() ? 1 : 0);
-      clk_pin_->digital_write(false);
-      delayMicroseconds(1);
-    }
-
-    // Die zusätzliche Puls-Sequenz für die NÄCHSTE Messung senden
-    if (active_channel_ == 0) {
-      for (int i = 0; i < 2; i++) { // Puls 25 und 26 -> Umschalten auf Kanal B (Gain 32)
-        clk_pin_->digital_write(true); delayMicroseconds(1);
-        clk_pin_->digital_write(false); delayMicroseconds(1);
-      }
-    } else {
-      clk_pin_->digital_write(true); delayMicroseconds(1); // Puls 25 -> Umschalten auf Kanal A (Gain 128)
-      clk_pin_->digital_write(false); delayMicroseconds(1);
-    }
-
-#ifdef USE_ESP32
-    portEXIT_CRITICAL(&myMutex);
-#endif
-
-    // Vorzeichenkorrektur (Zweierkomplement für 24-Bit)
-    if (value & 0x800000) {
-      value |= 0xFF000000;
-    }
-
-    // Daten an die registrierten Sensoren übergeben
-    for (auto *sensor : sensors_) {
-      sensor->handle_raw_value(active_channel_, (float)value);
-    }
-
-    // Kanal für den nächsten Durchlauf umschalten
-    active_channel_ = (active_channel_ == 0) ? 1 : 0;
-  }
+  void read_hardware_();
 
   InternalGPIOPin *clk_pin_;
   InternalGPIOPin *dout_pin_;
@@ -124,7 +56,7 @@ class HX711MuxHub : public Component {
 };
 
 // ====================================================================
-// 2. DER SENSOR (Die einzelne Wägezelle mit Flash-Tara NACH den Filtern)
+// 2. DER SENSOR (Glättung im YAML -> Tara in C++ -> Scaling im YAML)
 // ====================================================================
 class HX711MuxSensor : public sensor::Sensor, public Component {
  public:
@@ -132,47 +64,119 @@ class HX711MuxSensor : public sensor::Sensor, public Component {
   void set_channel(int channel) { target_channel_ = channel; }
 
   void setup() override {
-    // Flash-Speicherplatz vom ESPHome-System reservieren (Eindeutiger Hash per Objekt ID)
     this->pref_ = global_preferences->make_preference<float>(this->get_object_id_hash());
     if (!this->pref_.load(&this->tare_value_)) {
       this->tare_value_ = 0.0f; 
     }
     ESP_LOGI(TAG, "'%s': Geladener Tara-Nullpunkt aus dem Flash: %.0f Ticks", this->get_name().c_str(), this->tare_value_);
 
-    // REIHENFOLGEN-HOOK: Greift den Wert nach Median/MovingAverage ab, nullt ihn, 
-    // und übergibt ihn erst danach an calibrate_linear im YAML
-    this->add_on_raw_value_callback([this](float filtered_raw_ticks) {
-        return filtered_raw_ticks - this->tare_value_;
-    });
+    class MuxTareFilter : public sensor::Filter {
+     public:
+      MuxTareFilter(HX711MuxSensor *parent) : parent_(parent) {}
+      
+      // KORREKTUR: "optional" muss zwingend kleingeschrieben werden, passend zur Basisklasse!
+      optional<float> new_value(float value) override {
+        // Sichert die gefilterten Ticks direkt vor dem Abzug für perform_tare()
+        parent_->last_filtered_ticks_ = value;
+        return value - parent_->tare_value_;
+      }
+     protected:
+      HX711MuxSensor *parent_;
+    };
+
+    // Filter registrieren (Reihenfolge bleibt perfekt erhalten!)
+    this->add_filter(new MuxTareFilter(this));
   }
 
   void handle_raw_value(int current_channel, float raw_value) {
     if (current_channel == target_channel_) {
-      this->last_live_raw_ = raw_value; // Sichert den rohen Hardware-Wert für das Nullen
-      this->publish_state(raw_value);   // Schickt die Ticks zuerst in die Filterkette
+      this->last_live_raw_ = raw_value; // Sichert den absolut rohen Hardware-Wert in Ticks
+      this->publish_state(raw_value);   // Schickt die Ticks unberührt in die YAML-Glättungsfilter
     }
   }
 
   void perform_tare() {
-    if (this->has_state()) {
-        // Berechne den neuen Nullpunkt basierend auf den gefilterten Ticks
-        this->tare_value_ = this->state + this->tare_value_; 
-        this->pref_.save(&this->tare_value_);
-        global_preferences->sync();
-        
-        // Zwingt den Sensor instantan auf 0 Ticks Differenz (Sofortiges Nullen!)
-        this->publish_state(0.0f);
-        ESP_LOGI(TAG, "'%s': Kanal erfolgreich tariert. Neuer Nullpunkt: %.0f Ticks", this->get_name().c_str(), this->tare_value_);
-    }
+    // Mathematisch exakt: Der neue Nullpunkt setzt auf den gefilterten Ticks auf
+    this->tare_value_ = this->last_filtered_ticks_; 
+    this->pref_.save(&this->tare_value_);
+    global_preferences->sync();
+    
+    // INSTANTAN-RESET: Schickt den aktuellen Rohwert direkt noch mal los,
+    // zieht das neue Tara ab und drückt die Kurve rechtwinklig auf Null!
+    this->publish_state(this->last_live_raw_);
+    ESP_LOGI(TAG, "'%s': Kanal erfolgreich tariert. Neuer Nullpunkt: %.0f Ticks", this->get_name().c_str(), this->tare_value_);
   }
+
+ public: // Für das Filter-Objekt freigeben
+  float tare_value_{0.0f};
+  float last_filtered_ticks_{0.0f};
 
  protected:
   HX711MuxHub *hub_;
   int target_channel_;
-  float tare_value_{0.0f};
   float last_live_raw_{0.0f};
   ESPPreferenceObject pref_;
 };
+
+// ====================================================================
+// REALISIERUNG DER HUB-LESEMETHODE
+// ====================================================================
+inline void HX711MuxHub::read_hardware_() {
+  if (dout_pin_->digital_read() == 1) {
+    uint32_t wait_start = millis();
+    while (dout_pin_->digital_read() == 1) {
+      if (millis() - wait_start > 250) {
+        clk_pin_->digital_write(true);
+        delayMicroseconds(70);
+        clk_pin_->digital_write(false);
+        delayMicroseconds(10);
+        active_channel_ = 0; 
+        ESP_LOGW(TAG, "Timeout beim Warten auf Data Ready!");
+        return;
+      }
+        delay(1);
+    }
+  }
+
+  long value = 0;
+
+#ifdef USE_ESP32
+  static portMUX_TYPE myMutex = portMUX_INITIALIZER_UNLOCKED;
+  portENTER_CRITICAL(&myMutex);
+#endif
+
+  for (int i = 0; i < 24; i++) {
+    clk_pin_->digital_write(true);
+    delayMicroseconds(1);
+    value = (value << 1) | (dout_pin_->digital_read() ? 1 : 0);
+    clk_pin_->digital_write(false);
+    delayMicroseconds(1);
+  }
+
+  if (active_channel_ == 0) {
+    for (int i = 0; i < 2; i++) { 
+      clk_pin_->digital_write(true); delayMicroseconds(2); 
+      clk_pin_->digital_write(false); delayMicroseconds(2);
+    }
+  } else {
+    clk_pin_->digital_write(true); delayMicroseconds(2);
+    clk_pin_->digital_write(false); delayMicroseconds(2);
+  }
+
+#ifdef USE_ESP32
+  portEXIT_CRITICAL(&myMutex);
+#endif
+
+  if (value & 0x800000) {
+    value |= 0xFF000000;
+  }
+
+  for (auto *sensor : sensors_) {
+    sensor->handle_raw_value(active_channel_, (float)value);
+  }
+
+  active_channel_ = (active_channel_ == 0) ? 1 : 0;
+}
 
 // ====================================================================
 // 3. DER TARIER-BUTTON
@@ -185,8 +189,12 @@ class HX711MuxTareButton : public button::Button, public Component {
   HX711MuxSensor *sensor_;
 };
 
+inline void HX711MuxButton_press_action_fix() {
+  // Verhindert Linker-Fehler
+}
+
 // ====================================================================
-// 4. DER FLEXIBLE N:M SUMMEN-SENSOR (Perfekt synchronisiert)
+// 4. DER FLEXIBLE N:M SUMMEN-SENSOR
 // ====================================================================
 class HX711MuxSumSensor : public sensor::Sensor, public Component {
  public:
