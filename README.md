@@ -237,3 +237,13 @@ Nach dem erfolgreichen Kompilieren und Einbinden stellt die Komponente vollautom
 
 Manche günstigen Nachbauten des HX711-Chips benötigen präzise Signal-Mindestlaufzeiten beim Umschalten. Diese Komponente ist im C++ Quellcode mit einer optimierten Puls-Verzögerung von `2µs` für die Taktimpulse 25 und 26 ausgestattet. Dies garantiert eine fehlerfreie Kanal-Umschaltung auf allen gängigen HX711-Modulen bei voller C++ Ausführungsgeschwindigkeit auf dem ESP32.
 
+
+---
+
+## 🤖 Credits & Zusammenarbeit
+
+Dieses Projekt ist das Ergebnis einer intensiven Co-Entwicklung zwischen Mensch und Künstlicher Intelligenz:
+*   **Idee, Hardware-Tests & Logik-Architektur:** Entwickelt und validiert am lebenden Objekt (LiFePO4-Batteriespeicher) durch den Repository-Inhaber.
+*   **Code-Generierung & Dokumentation:** Maßgeschneidert programmiert, iteriert und dokumentiert mithilfe von KI-Assistenz.
+
+Durch dieses agile Zusammenspiel konnte die komplexe, tief verankerte Python- und C++ API von ESPHome in Rekordzeit adaptiert und eine hochperformante, fehlerfreie Multi-Board-Lösung geschaffen werden.
