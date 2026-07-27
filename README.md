@@ -1,4 +1,30 @@
+
 # ESPHome HX711 Dual-Channel Multiplexer Component
+
+## 🎯 Motivation & Hintergrund
+
+Die offizielle, in ESPHome integrierte `hx711`-Komponente stößt bei komplexeren Projekten schnell an ihre Grenzen. Sie ist strukturell **starr und unflexibel**: Ein einzelner Sensor-Eintrag kann im YAML-Standard immer nur exakt einen Kanal auslesen (Kanal A *oder* Kanal B). Möchte man beide Kanäle nutzen, ist man gezwungen, zwei separate Instanzen anzulegen, die sich auf Hardware-Ebene beim Bit-Banging und der Taktung gegenseitig blockieren oder im schlechtesten Fall den HX711-Chip in unvorhersehbare Zustände versetzen.
+
+Zudem neigen reine Software-Bit-Banging-Lösungen in modernen ESPHome-Setups zu massiven Messwert-Ausreißern, wenn im Hintergrund hochfrequente serielle Protokolle laufen (z. B. Modbus-Abfragen von JK-BMS, Daly-BMS oder Victron-Geräten). Die dortigen Software-Interrupts zerreißen das empfindliche Timing des HX711-Takts.
+
+**Diese Komponente löst all diese Probleme fundamental durch nativen C++ Code:** Sie übernimmt das Multiplexing beider Kanäle (A & B) synchron über einen einzigen Hardware-Hub, schützt das Takt-Timing durch kurzzeitige Interrupt-Sperren (`portENTER_CRITICAL`) vor BMS-Störungen und verlagert das Tarieren (Nullpunkt-Speicherung im Flash) an die mathematisch perfekte Stelle *hinter* den Glättungsfiltern.
+
+---
+
+## 💡 Anwendungsbeispiel: Überwachung eines großen Batterie-Speichers
+
+Ein typisches Szenario für den Einsatz dieser Komponente ist die mechanische Überwachung von prismatischen Lithium-Eisenphosphat-Zellen (LiFePO4) in einem stationären Heimspeicher (z. B. 16S Akku-Block):
+
+*   **Das Problem:** LiFePO4-Zellen dehnen sich bei hoher Belastung oder hohem Ladezustand physikalisch aus (sogenanntes "Cell Swelling"). Um die Lebensdauer der Zellen nicht zu gefährden, werden sie in einem stabilen Rahmen mit massiven Druckfedern eingespannt. Zu hoher Druck (Kompression) beschädigt die Zellen; zu niedriger Druck führt zu Kapazitätsverlust.
+*   **Die Lösung mit dieser Komponente:** An den Enden des Spannrahmens werden schwere Industrie-Wägezellen montiert. 
+    *   **Kanal A (Board 1)** misst den Druck der linken Feder-Achse.
+    *   **Kanal B (Board 1)** misst den Druck der rechten Feder-Achse.
+    *   Das **Gesamtgewicht (die Summe)** zeigt im Home Assistant sofort die absolute mechanische Gesamtkraft (in kg oder Newton) an, die auf die Batteriezellen wirkt.
+*   **Der Clou:** Obwohl das ESP32-Board zeitgleich über Modbus im Millisekundentakt hunderte Datenwerte (Zellspannungen, Ströme, Temperaturen) aus dem JK-BMS ausliest, bleibt die Druckmessung der Waage absolut stabil, zappelfrei und liefert bei Entlastung per Knopfdruck eine perfekte Nullkurve.
+
+
+
+
 
 Eine hochperformante, native C++ Erweiterung für ESPHome zur synchronisierten Auslesung beider Kanäle (Kanal A & Kanal B) eines oder mehrerer HX711-Wägezellen-Verstärker. 
 
