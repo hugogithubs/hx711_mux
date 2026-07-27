@@ -9,9 +9,16 @@
 #include <vector>
 #include <map>
 
+// Wichtig für den Interrupt-Schutz auf dem ESP32
+#ifdef USE_ESP32
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#endif
+
 namespace esphome {
 namespace hx711_mux {
 
+static const char *const TAG = "hx711_mux";
 class HX711MuxSensor;
 
 // ====================================================================
@@ -24,13 +31,14 @@ class HX711MuxHub : public Component {
   void register_sensor(HX711MuxSensor *sensor) { sensors_.push_back(sensor); }
 
   void setup() override {
-    ESP_LOGI("hx711_mux", "Initialisiere HX711 Mux Board...");
+    ESP_LOGI(TAG, "Initialisiere HX711 Mux Board GPIOs...");
+    // Nutzt das native ESPHome-Setup für Pins (setzt Richtungen INPUT/OUTPUT automatisch)
     clk_pin_->setup();
-    clk_pin_->pin_mode(gpio::FLAG_OUTPUT);
     dout_pin_->setup();
-    dout_pin_->pin_mode(gpio::FLAG_INPUT);
+    
+    // Initialen Pegel für den Takt sicher auf LOW setzen (On-Boot Schutz)
     clk_pin_->digital_write(false);
-    active_channel_ = 0; // Starte standardmäßig mit Kanal A
+    active_channel_ = 0; 
   }
 
   void loop() override {
@@ -54,8 +62,8 @@ class HX711MuxHub : public Component {
           delayMicroseconds(70);
           clk_pin_->digital_write(false);
           delayMicroseconds(10);
-          active_channel_ = 0; // Zurücksetzen auf Startkanal A
-          ESP_LOGW("hx711_mux", "Timeout beim Warten auf Data Ready!");
+          active_channel_ = 0; 
+          ESP_LOGW(TAG, "Timeout beim Warten auf Data Ready!");
           return;
         }
         delay(1);
@@ -64,9 +72,11 @@ class HX711MuxHub : public Component {
 
     long value = 0;
 
-    // KRITISCHER BEREICH: Interrupts kurz sperren (Maximaler Schutz vor Störungen)
-    portMUX_TYPE myMutex = portMUX_INITIALIZER_UNLOCKED;
+    // KRITISCHER BEREICH: Interrupt-Schutz nur aktivieren, wenn wir auf einem ESP32 laufen
+#ifdef USE_ESP32
+    static portMUX_TYPE myMutex = portMUX_INITIALIZER_UNLOCKED;
     portENTER_CRITICAL(&myMutex);
+#endif
 
     // Die 24 Datenbits takten und einlesen
     for (int i = 0; i < 24; i++) {
@@ -88,8 +98,9 @@ class HX711MuxHub : public Component {
       clk_pin_->digital_write(false); delayMicroseconds(1);
     }
 
-    // Kritischen Bereich sofort wieder verlassen
+#ifdef USE_ESP32
     portEXIT_CRITICAL(&myMutex);
+#endif
 
     // Vorzeichenkorrektur (Zweierkomplement für 24-Bit)
     if (value & 0x800000) {
@@ -121,19 +132,17 @@ class HX711MuxSensor : public sensor::Sensor, public Component {
   void set_channel(int channel) { target_channel_ = channel; }
 
   void setup() override {
-    // Flash-Speicherplatz vom ESPHome-System reservieren (32-Bit Float für Ticks)
+    // Flash-Speicherplatz vom ESPHome-System reservieren (Eindeutiger Hash per Objekt ID)
     this->pref_ = global_preferences->make_preference<float>(this->get_object_id_hash());
     if (!this->pref_.load(&this->tare_value_)) {
       this->tare_value_ = 0.0f; 
     }
-    ESP_LOGI("hx711_mux", "Geladener Tara-Nullpunkt aus dem Flash: %.0f Ticks", this->tare_value_);
+    ESP_LOGI(TAG, "'%s': Geladener Tara-Nullpunkt aus dem Flash: %.0f Ticks", this->get_name().c_str(), this->tare_value_);
 
-    // REIHENFOLGEN-HOOK: Wir klinken uns DIREKT hinter deiner YAML-Filterkette ein.
-    // Sobald Median und Moving-Average fertig sind, fangen wir den Wert ab, 
-    // ziehen das Tara ab, und erst DANACH läuft der Wert in dein calibrate_linear!
+    // REIHENFOLGEN-HOOK: Greift den Wert nach Median/MovingAverage ab, nullt ihn, 
+    // und übergibt ihn erst danach an calibrate_linear im YAML
     this->add_on_raw_value_callback([this](float filtered_raw_ticks) {
-        float zero_tracked_ticks = filtered_raw_ticks - this->tare_value_;
-        return zero_tracked_ticks;
+        return filtered_raw_ticks - this->tare_value_;
     });
   }
 
@@ -153,7 +162,7 @@ class HX711MuxSensor : public sensor::Sensor, public Component {
         
         // Zwingt den Sensor instantan auf 0 Ticks Differenz (Sofortiges Nullen!)
         this->publish_state(0.0f);
-        ESP_LOGI("hx711_mux", "Kanal erfolgreich tariert. Neuer Nullpunkt: %.0f Ticks", this->tare_value_);
+        ESP_LOGI(TAG, "'%s': Kanal erfolgreich tariert. Neuer Nullpunkt: %.0f Ticks", this->get_name().c_str(), this->tare_value_);
     }
   }
 
