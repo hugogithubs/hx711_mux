@@ -28,7 +28,7 @@ Damit die Mathematik absolut fehlerfrei aufgeht, durchläuft jeder Messwert dies
 
 ## 🚀 Konfigurations-Beispiel (Multi-Board Setup)
 
-Das folgende Beispiel zeigt die Verwendung von **zwei physikalischen HX711-Boards**, an denen jeweils zwei Wägezellen (insgesamt 4 Zellen) betrieben werden. Alle 4 Zellen werden am Ende vollautomatisch zu einem synchronen Gesamtgewicht addiert.
+Das folgende Beispiel zeigt die Verwendung von **zwei physikalischen HX711-Boards**, an denen jeweils zwei Wägezellen (insgesamt 4 Zellen) betrieben werden. Alle 4 Zellen werden am Ende vollautomatisch zu einem synchronen Gesamtgewicht addiert, außerdem werden weitere Summen als Beispiel gebildet, die alle parallel verwendet werden können.
 
 ### Ordnerstruktur auf deinem Server / Git
 ```text
