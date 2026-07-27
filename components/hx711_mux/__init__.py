@@ -3,11 +3,10 @@ import esphome.config_validation as cv
 from esphome.components import gpio
 from esphome.const import CONF_ID, CONF_CLK_PIN, CONF_DOUT_PIN
 
-# C++ Namespace festlegen
+# Eindeutiger Namespace
 hx711_mux_ns = cg.esphome_ns.namespace("hx711_mux")
 HX711MuxHub = hx711_mux_ns.class_("HX711MuxHub", cg.Component)
 
-# Validierung für den Hardware-Hub (hx711_mux:)
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(HX711MuxHub),
