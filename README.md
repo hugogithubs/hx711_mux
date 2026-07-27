@@ -34,7 +34,7 @@ Diese Komponente wurde speziell für anspruchsvolle Umgebungen entwickelt, in de
 
 *   **Echtes Dual-Channel Multiplexing:** Nutzt die Hardware-Umschaltung des HX711, um Kanal A (Gain 128) und Kanal B (Gain 32) im schnellen Wechsel über dieselben zwei Pins auszulesen.
 *   **Hardware-Interrupt-Schutz (Anti-BMS-Jitter):** Der kritische Bit-Banging-Bereich wird im ESP32-Kern kurzzeitig gegen Interrupts gesperrt (`portENTER_CRITICAL`). Messungen werden *niemals* durch Modbus- oder serielle BMS-Abfragen verzerrt.
-*   **Intantanes, senkrechtes Nullen (Kriecher-Schutz):** Der C++ eigene Tara-Filter sitzt logisch *hinter* den Glättungsfiltern im RAM, aber *vor* dem Scaling. Beim Druck auf "Tarieren" springt der Wert im Home Assistant **sofort und rechtwinklig auf Null**, ohne träge durch die Filter kriechan zu müssen.
+*   **Intantanes, senkrechtes Nullen (Kriecher-Schutz):** Der C++ eigene Tara-Filter sitzt logisch *hinter* den Glättungsfiltern im RAM, aber *vor* dem Scaling. Beim Druck auf "Tarieren" springt der Wert im Home Assistant **sofort und rechtwinklig auf Null**, ohne träge durch die Filter kriechen zu müssen.
 *   **Dauerhafter Flash-Speicher (NVS):** Der ermittelte Nullpunkt (Tara) wird ausfallsicher im Flash des ESP32 abgelegt und übersteht jeden Stromausfall oder Neustart.
 *   **Automatisches UI-Frontend:** Die Komponente erzeugt im Home Assistant für jede Wägezelle vollautomatisch einen passenden `Tarieren`-Button. Es ist kein manueller YAML-Code für Knöpfe nötig.
 *   **Perfekt synchronisierter Summen-Sensor:** Der mathematische Summen-Sensor rechnet erst ab, wenn *alle* beteiligten Zellen im selben Zyklus aktualisiert wurden. Das verhindert Jitter auf dem Gesamtgewicht.
