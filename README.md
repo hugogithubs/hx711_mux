@@ -1,13 +1,17 @@
 
-# ESPHome HX711 Dual-Channel Multiplexer Component
+# ESPHome HX711 Dual-Channel Multiplexer Komponente
+
+Eine hochperformante, native C++ Erweiterung für ESPHome zur synchronisierten Auslesung beider Kanäle (Kanal A & Kanal B) eines oder mehrerer HX711-Wägezellen-Verstärker.
+
+---
 
 ## 🎯 Motivation & Hintergrund
 
-Die offizielle, in ESPHome integrierte `hx711`-Komponente stößt bei komplexeren Projekten schnell an ihre Grenzen. Sie ist strukturell **starr und unflexibel**: Ein einzelner Sensor-Eintrag kann im YAML-Standard immer nur exakt einen Kanal auslesen (Kanal A *oder* Kanal B). Es ist **nicht** möglich, beide Kanäle zu nutzen, indem man zwei separate Instanzen anlegt, da beide die selben Pins nutzen müßten, was durch die Validierung verhindert wird.
+Die offizielle, in ESPHome integrierte `hx711`-Komponente stößt bei komplexeren Projekten schnell an ihre Grenzen. Sie ist strukturell **starr und unflexibel**: Ein einzelner Sensor-Eintrag kann im YAML-Standard immer nur exakt einen Kanal auslesen (Kanal A *oder* Kanal B). Es ist **nicht** möglich, beide Kanäle zu nutzen, indem man zwei separate Instanzen anlegt, da beide dieselben Pins nutzen müssten, was durch die Validierung des Frameworks verhindert wird.
 
 Zudem neigen reine Software-Bit-Banging-Lösungen in modernen ESPHome-Setups zu massiven Messwert-Ausreißern, wenn im Hintergrund hochfrequente serielle Protokolle laufen (z. B. Modbus-Abfragen von JK-BMS, Daly-BMS oder Victron-Geräten). Die dortigen Software-Interrupts zerreißen das empfindliche Timing des HX711-Takts.
 
-**Diese Komponente löst all diese Probleme fundamental durch nativen C++ Code:** Sie übernimmt das Multiplexing beider Kanäle (A & B) synchron über einen einzigen Hardware-Hub, schützt das Takt-Timing durch kurzzeitige Interrupt-Sperren (`portENTER_CRITICAL`) vor BMS-Störungen und verlagert das Tarieren (Nullpunkt-Speicherung im Flash) an die mathematisch perfekte Stelle *hinter* den Glättungsfiltern.
+**Diese Komponente löst all diese Probleme fundamental durch nativen C++ Code:** Sie übernimmt das Multiplexing beider Kanäle (A & B) synchron über einen einzigen Hardware-Hub, schützt das Takt-Timing durch kurzzeitige Interrupt-Sperren (`portENTER_CRITICAL`) vor BMS-Störungen und verlagert das Tarieren (Nullpunkt-Speicherung im Flash) an die mathematisch perfekte Stelle direkt *vor* den Glättungsfiltern.
 
 ---
 
@@ -22,17 +26,14 @@ Ein typisches Szenario für den Einsatz dieser Komponente ist die mechanische Ü
     *   Das **Gesamtgewicht (die Summe)** zeigt im Home Assistant sofort die absolute mechanische Gesamtkraft (in kg oder Newton) an, die auf die Batteriezellen wirkt.
 *   **Der Clou:** Obwohl das ESP32-Board zeitgleich über Modbus im Millisekundentakt hunderte Datenwerte (Zellspannungen, Ströme, Temperaturen) aus dem JK-BMS ausliest, bleibt die Druckmessung der Waage absolut stabil, zappelfrei und liefert bei Entlastung per Knopfdruck eine perfekte Nullkurve.
 
-
-Eine hochperformante, native C++ Erweiterung für ESPHome zur synchronisierten Auslesung beider Kanäle (Kanal A & Kanal B) eines oder mehrerer HX711-Wägezellen-Verstärker. 
-
+---
 
 ## ✨ Features & Was dich erwartet
 
 *   **Echtes Dual-Channel Multiplexing:** Nutzt die Hardware-Umschaltung des HX711, um Kanal A (Gain 128) und Kanal B (Gain 32) im schnellen Wechsel über dieselben zwei Pins auszulesen.
 *   **Hardware-Interrupt-Schutz (Anti-BMS-Jitter):** Der kritische Bit-Banging-Bereich wird im ESP32-Kern kurzzeitig gegen Interrupts gesperrt (`portENTER_CRITICAL`). Messungen werden *niemals* durch Modbus- oder serielle BMS-Abfragen verzerrt.
-*   **Intantanes, senkrechtes Nullen (Kriecher-Schutz):** Der C++ eigene Tara-Filter sitzt logisch *hinter* den Glättungsfiltern im RAM, aber *vor* dem Scaling. Beim Druck auf "Tarieren" springt der Wert im Home Assistant **sofort und rechtwinklig auf Null**, ohne träge durch die Filter kriechen zu müssen.
-*   **Dauerhafter Flash-Speicher (NVS):** Der ermittelte Nullpunkt (Tara) wird ausfallsicher im Flash des ESP32 abgelegt und übersteht jeden Stromausfall oder Neustart.
-*   **Automatisches UI-Frontend:** Die Komponente erzeugt im Home Assistant für jede Wägezelle vollautomatisch einen passenden `Tarieren`-Button. Es ist kein manueller YAML-Code für Knöpfe nötig.
+*   **🛡️ Automatisches UI-Frontend mit Sicherheits-Sperre:** Die Komponente erzeugt im Home Assistant für jede Wägezelle vollautomatisch einen passenden `Tarieren`-Button **sowie einen `Freigabe`-Schalter**. Das Tarieren ist blockiert, bis die Freigabe manuell aktiviert wird. Nach dem Betätigen sperrt sich der Schalter zum Schutz deines Flash-Speichers (NVS) sofort wieder selbstständig.
+*   **⏱️ Boot-Muting gegen Einschalt-Jitter:** Beim Systemstart oder nach einem OTA-Update blockiert die Komponente die Datenweitergabe für die ersten 5 Sekunden. Die Filterketten können sich so im Hintergrund mit stabilen Werten füllen, wodurch Fehlmessungen im Plot effektiv verhindert werden.
 *   **Perfekt synchronisierter Summen-Sensor:** Der mathematische Summen-Sensor rechnet erst ab, wenn *alle* beteiligten Zellen im selben Zyklus aktualisiert wurden. Das verhindert Jitter auf dem Gesamtgewicht.
 *   **Multi-Instanz-fähig (N:M Hub):** Unterstützt beliebig viele parallele HX711-Boards an unterschiedlichen Pins.
 
@@ -42,16 +43,18 @@ Eine hochperformante, native C++ Erweiterung für ESPHome zur synchronisierten A
 
 Damit die Mathematik absolut fehlerfrei aufgeht, durchläuft jeder Messwert diese exakte Kette:
 1. **Hardware-Read:** Absolut unberührte Roh-Ticks werden per optimiertem C++ Takt ausgelesen.
-2. **Glättung (YAML):** Die Ticks durchlaufen deine Filter (z. B. Median, Moving Average).
-3. **C++ Tara-Filter:** Der im Flash gespeicherte Nullpunkt wird vom geglätteten Ticks-Wert abgezogen.
-4. **Kalibrierung (YAML):** Das genullte Signal läuft in dein `calibrate_linear` und wird in Kilogramm umgerechnet.
+2. **C++ Tara-Filter:** Der im Flash gespeicherte Nullpunkt wird direkt von den Roh-Ticks abgezogen.
+3. **Glättung (YAML):** Die genullten Ticks durchlaufen deine Filter (z. B. Median, Moving Average).
+4. **Kalibrierung (YAML):** Das bereinigte Signal läuft in dein `calibrate_linear` und wird in Kilogramm umgerechnet.
 
 ---
+
 ## 📦 Installation & Einbindung
 
 Du kannst diese Komponente entweder direkt über GitHub (empfohlen) oder lokal als Custom Component in dein ESPHome-Projekt einbinden.
 
 ### Option 1: Einbindung direkt via GitHub (Empfohlen)
+
 Füge die Komponente über das `external_components`-Feature direkt aus diesem GitHub-Repository in deine ESPHome-YAML-Konfiguration ein. ESPHome lädt die Dateien dann beim Kompilieren automatisch im Hintergrund herunter.
 
 ```yaml
@@ -107,21 +110,11 @@ switch:
     optimistic: true
 ```
 
+---
 
+## ⚙️ Konfigurations-Beispiel (Multi-Board Setup)
 
-## 🚀 Konfigurations-Beispiel (Multi-Board Setup)
-
-Das folgende Beispiel zeigt die Verwendung von **zwei physikalischen HX711-Boards**, an denen jeweils zwei Wägezellen (insgesamt 4 Zellen) betrieben werden. Alle 4 Zellen werden am Ende vollautomatisch zu einem synchronen Gesamtgewicht addiert, außerdem werden weitere Summen als Beispiel gebildet, die alle parallel verwendet werden können.
-
-### Ordnerstruktur auf deinem Server / Git
-```text
-your_repository/
-└── components/
-    └── hx711_mux/
-        ├── __init__.py
-        ├── sensor.py
-        └── hx711_mux.h
-```
+Das folgende Beispiel zeigt die Verwendung von **zwei physikalischen HX711-Boards**, an denen jeweils zwei Wägezellen (insgesamt 4 Zellen) betrieben werden. Alle 4 Zellen werden am Ende vollautomatisch zu einem synchronen Gesamtgewicht addiert. Zudem werden parallel zwei Teilsummen für die jeweiligen Achsen gebildet.
 
 ### Deine `esphome.yaml` Konfiguration
 
@@ -219,7 +212,7 @@ sensor:
       - calibrate_linear:
           datapoints:
             - 0 -> 0.00000
-            - 10500 -> 0.22100  # Individueller Faktor für Zelle 3
+            - 10500 -> 0.22100
 
   - platform: hx711_mux
     name: "Zelle 4 (Board 2 - Kanal B)"
@@ -237,7 +230,7 @@ sensor:
       - calibrate_linear:
           datapoints:
             - 0 -> 0.00000
-            - 2730 -> 0.22100  # Individueller Faktor für Zelle 4
+            - 2730 -> 0.22100
 
   # --------------------------------------------------------------------
   # DREI SYNCHRONE SUMMEN-SENSOREN GLEICHZEITIG (PARALLEL) als Beispiel
@@ -274,8 +267,6 @@ sensor:
       - zelle_2_b1_kb
       - zelle_3_b2_ka
       - zelle_4_b2_kb
-
-
 ```
 
 ---
@@ -307,13 +298,11 @@ Setzt nach erfolgreicher Freigabe die entsprechende Wägezelle im RAM und dauerh
 *   `button.zelle_3_board_2_kanal_a_tarieren`
 *   `button.zelle_4_board_2_kanal_b_tarieren`
 
-
 ---
 
 ## 💡 Hinweise zur Hardware-Umschaltung
 
 Manche günstigen Nachbauten des HX711-Chips benötigen präzise Signal-Mindestlaufzeiten beim Umschalten. Diese Komponente ist im C++ Quellcode mit einer optimierten Puls-Verzögerung von `2µs` für die Taktimpulse 25 und 26 ausgestattet. Dies garantiert eine fehlerfreie Kanal-Umschaltung auf allen gängigen HX711-Modulen bei voller C++ Ausführungsgeschwindigkeit auf dem ESP32.
-
 
 ---
 
@@ -325,7 +314,7 @@ Dieses Projekt ist das Ergebnis einer intensiven Co-Entwicklung zwischen Mensch 
 
 Durch dieses agile Zusammenspiel konnte die komplexe, tief verankerte Python- und C++ API von ESPHome in Rekordzeit adaptiert und eine hochperformante, fehlerfreie Multi-Board-Lösung geschaffen werden.
 
---
+---
 
 ## ⚠️ Haftungsausschluss (Disclaimer)
 
