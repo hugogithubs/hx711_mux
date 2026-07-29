@@ -3,6 +3,7 @@
 #include "esphome/core/component.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/button/button.h"
+#include "esphome/components/switch/switch.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 #include "esphome/core/preferences.h"
@@ -21,7 +22,7 @@ static const char *const TAG = "hx711_mux";
 class HX711MuxSensor;
 
 // ====================================================================
-// 1. DER HARDWARE-HUB (Deklaration)
+// 1. DER HARDWARE-HUB
 // ====================================================================
 class HX711MuxHub : public Component {
  public:
@@ -40,7 +41,6 @@ class HX711MuxHub : public Component {
 
   void loop() override {
     uint32_t now = millis();
-    // ASYNCHRONER RE-TRIGGER: Wenn wir warten oder 1000ms vorbei sind
     if (waiting_for_ready_ || (now - last_read_ > 1000)) {
       if (!waiting_for_ready_) {
         last_read_ = now; 
@@ -58,13 +58,12 @@ class HX711MuxHub : public Component {
   int active_channel_{0};
   std::vector<HX711MuxSensor *> sensors_;
   
-  // Zustandsspeicher für das nicht-blockierende Warten
   uint32_t timeout_start_{0};
   bool waiting_for_ready_{false};
 };
 
 // ====================================================================
-// 2. DER DEDIZIERTE TARA-FILTER (Saubere Namespace-Deklaration)
+// 2. DER DEDIZIERTE TARA-FILTER
 // ====================================================================
 class MuxTareFilter : public sensor::Filter {
  public:
@@ -75,11 +74,10 @@ class MuxTareFilter : public sensor::Filter {
 };
 
 // ====================================================================
-// 3. DER SENSOR (Völlig ohne dynamisches Heap-'new')
+// 3. DER SENSOR (Jetzt mit Boot-Muting gegen Start-Ausreißer)
 // ====================================================================
 class HX711MuxSensor : public sensor::Sensor, public Component {
  public:
-  // Konstruktor verknüpft das statische Filter-Objekt direkt mit diesem Sensor
   HX711MuxSensor() : tare_filter_(this) {}
 
   void set_hub(HX711MuxHub *hub) { hub_ = hub; }
@@ -92,13 +90,24 @@ class HX711MuxSensor : public sensor::Sensor, public Component {
     }
     ESP_LOGI(TAG, "'%s': Geladener Tara-Nullpunkt aus dem Flash: %.0f Ticks", this->get_name().c_str(), this->tare_value_);
 
-    // Wir übergeben die Adresse unseres festen Klassen-Members (Speichersicher!)
     this->add_filter(&this->tare_filter_);
+    this->boot_timestamp_ = millis(); // Boot-Zeitpunkt merken
   }
 
   void handle_raw_value(int current_channel, float raw_value) {
     if (current_channel == target_channel_) {
       this->last_live_raw_ = raw_value; 
+      
+      // Sicherheits-Check: Die ersten 5 Sekunden nach dem Booten keine Werte publizieren
+      // Dadurch füllen sich erst die YAML-Filter (Median/Moving Average) mit sauberen Daten
+      if (millis() - this->boot_timestamp_ < 5000) {
+        // Wir aktualisieren nur den Filter-Speicher, senden aber nix an HA/Summensensor
+        float temp_filtered = raw_value - this->tare_value_;
+        this->last_filtered_ticks_ = raw_value; 
+        ESP_LOGD(TAG, "'%s': Ignoriere Start-Wert während Stabilisierungsphase: %.0f", this->get_name().c_str(), raw_value);
+        return; 
+      }
+
       this->publish_state(raw_value);   
     }
   }
@@ -121,30 +130,27 @@ class HX711MuxSensor : public sensor::Sensor, public Component {
   int target_channel_;
   float last_live_raw_{0.0f};
   ESPPreferenceObject pref_;
+  uint32_t boot_timestamp_{0}; // Speicher für die Boot-Verzögerung
   
-  // Fester Bestandteil der Klasse (Kein dynamischer Pointer!)
   MuxTareFilter tare_filter_; 
 };
 
-// Realisierung der Filtermethode nach vollständiger Deklaration
 inline optional<float> MuxTareFilter::new_value(float value) {
   this->parent_->last_filtered_ticks_ = value;
   return value - this->parent_->tare_value_;
 }
 
 // ====================================================================
-// REALISIERUNG DER HUB-LESEMETHODE (Asynchron & Häppchen-Sperre)
+// REALISIERUNG DER HUB-LESEMETHODE
 // ====================================================================
 inline void HX711MuxHub::read_hardware_() {
-  // ASYNCHRONER HARDWARE-CHECK: Wenn der Chip beschäftigt ist (DOUT ist HIGH)
   if (dout_pin_->digital_read() == 1) {
     if (!waiting_for_ready_) {
       timeout_start_ = millis();
       waiting_for_ready_ = true;
-      return; // Sofort abbrechen! Hauptthread (BMS) darf ungehindert weiterarbeiten.
+      return;
     }
     
-    // Timeout prüfen (250ms)
     if (millis() - timeout_start_ > 250) {
       clk_pin_->digital_write(true);
       delayMicroseconds(70);
@@ -155,23 +161,18 @@ inline void HX711MuxHub::read_hardware_() {
       ESP_LOGW(TAG, "Timeout beim Warten auf Data Ready! Reset-Puls gesendet.");
       return;
     }
-    
-    return; // Zurück in den Loop, im nächsten Durchlauf wieder anklopfen
+    return;
   }
 
-  // Daten sind bereit (DOUT ging auf LOW):
   waiting_for_ready_ = false; 
-
   long value = 0;
 
 #ifdef USE_ESP32
   static portMUX_TYPE myMutex = portMUX_INITIALIZER_UNLOCKED;
 #endif
 
-  // Die 24 Datenbits takten und einlesen
   for (int i = 0; i < 24; i++) {
 #ifdef USE_ESP32
-    // HÄPPCHEN-SPERRE: Nur für das physische Auslesen ultrakurz zumachen (< 3µs)
     portENTER_CRITICAL(&myMutex);
 #endif
 
@@ -183,12 +184,9 @@ inline void HX711MuxHub::read_hardware_() {
 #ifdef USE_ESP32
     portEXIT_CRITICAL(&myMutex);
 #endif
-
-    // Diese Mikrosekunden-Pause läuft bei GEÖFFNETEN Interrupts!
     delayMicroseconds(1); 
   }
 
-  // Zusätzliche Puls-Sequenz für die Hardware-Umschaltung
   if (active_channel_ == 0) {
     for (int i = 0; i < 2; i++) { 
 #ifdef USE_ESP32
@@ -230,17 +228,29 @@ inline void HX711MuxHub::read_hardware_() {
 class HX711MuxTareButton : public button::Button, public Component {
  public:
   void set_sensor(HX711MuxSensor *sensor) { sensor_ = sensor; }
+  void set_unlock_switch(switch_::Switch *unlock_switch) { unlock_switch_ = unlock_switch; }
+
  protected:
-  void press_action() override { sensor_->perform_tare(); }
-  HX711MuxSensor *sensor_;
+  void press_action() override {
+    if (this->unlock_switch_ != nullptr && this->unlock_switch_->state) {
+      ESP_LOGI(TAG, "'%s': Freigabe aktiv. Führe Tarieren aus!", this->get_name().c_str());
+      
+      if (this->sensor_ != nullptr) {
+        this->sensor_->perform_tare(); 
+      }
+   
+      this->unlock_switch_->turn_off(); 
+    } else {
+      ESP_LOGW(TAG, "'%s': Tarieren blockiert! Bitte zuerst den Freigabe-Schalter einschalten.", this->get_name().c_str());
+    }
+  }
+
+  HX711MuxSensor *sensor_{nullptr};
+  switch_::Switch *unlock_switch_{nullptr};
 };
 
-inline void HX711MuxButton_press_action_fix() {
-  // Verhindert Linker-Fehler
-}
-
 // ====================================================================
-// 5. DER FLEXIBLE N:M SUMMEN-SENSOR (Perfekt synchronisiert)
+// 5. DER FLEXIBLE N:M SUMMEN-SENSOR
 // ====================================================================
 class HX711MuxSumSensor : public sensor::Sensor, public Component {
  public:

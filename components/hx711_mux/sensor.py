@@ -1,7 +1,8 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 import esphome.core as core
-from esphome.components import sensor, button
+from esphome.components import sensor, button, switch
+
 from esphome.const import (
     CONF_ID,
     CONF_CHANNEL,
@@ -16,13 +17,14 @@ HX711MuxSensor = hx711_mux_ns.class_("HX711MuxSensor", sensor.Sensor, cg.Compone
 HX711MuxTareButton = hx711_mux_ns.class_("HX711MuxTareButton", button.Button, cg.Component)
 HX711MuxSumSensor = hx711_mux_ns.class_("HX711MuxSumSensor", sensor.Sensor, cg.Component)
 
+# Hier zwingen wir ESPHome, die korrekte TemplateSwitch-Klasse in C++ zu nutzen!
+TemplateSwitch = cg.esphome_ns.namespace("template_").class_("TemplateSwitch", switch.Switch, cg.Component)
+
 CONF_HUB_ID = "hub_id"
 CONF_TRACKS = "tracks"
 
-# MULTI-TYP-SCHEMA: Unterscheidet anhand von "type" schon bei der Validierung den C++ Typen!
 CONFIG_SCHEMA = cv.typed_schema(
     {
-        # Typ 1: Normale Wägezelle (Standard)
         "cell": sensor.sensor_schema(
             HX711MuxSensor,
             icon="mdi:weight-kilogram",
@@ -34,9 +36,8 @@ CONFIG_SCHEMA = cv.typed_schema(
             }
         ).extend(cv.COMPONENT_SCHEMA),
         
-        # Typ 2: Der synchrone Summensensor
         "sum": sensor.sensor_schema(
-            HX711MuxSumSensor, # <-- Hier erfährt der Builder sofort den richtigen C++ Typen!
+            HX711MuxSumSensor,
             icon="mdi:weight-kilogram",
             state_class=STATE_CLASS_MEASUREMENT,
         ).extend(
@@ -49,7 +50,6 @@ CONFIG_SCHEMA = cv.typed_schema(
 )
 
 async def to_code(config):
-    # Fall 1: Summen-Sensor
     if config[cv.CONF_TYPE] == "sum":
         var = cg.new_Pvariable(config[CONF_ID])
         await cg.register_component(var, config)
@@ -60,7 +60,6 @@ async def to_code(config):
             cg.add(var.add_sensor(tracker))
         return
 
-    # Fall 2: Normale Wägezelle
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     await sensor.register_sensor(var, config)
@@ -72,13 +71,25 @@ async def to_code(config):
     channel = 0 if config[CONF_CHANNEL] == "A" else 1
     cg.add(var.set_channel(channel))
 
-    # Erzeugt das ID-Objekt für den Button
+    # 1. Den Freigabe-Schalter direkt als TemplateSwitch erzeugen
+    unlock_id = core.ID(f"{config[CONF_ID]}_tare_unlock", is_declaration=True, type=TemplateSwitch)
+    unlock_var = cg.new_Pvariable(unlock_id)
+    
+    unlock_schema = switch.switch_schema(TemplateSwitch)
+    unlock_config = unlock_schema({
+        CONF_ID: unlock_id,
+        CONF_NAME: f"{config[CONF_NAME]} Freigabe",
+        "icon": "mdi:lock",
+    })
+    await switch.register_switch(unlock_var, unlock_config)
+    cg.add(unlock_var.set_optimistic(True)) 
+
+    # 2. Den Tare-Button erzeugen
     button_id = core.ID(
         f"{config[CONF_ID]}_tare_button", 
         is_declaration=True, 
         type=HX711MuxTareButton
     )
-    
     btn_var = cg.new_Pvariable(button_id)
     
     button_schema = button.button_schema(HX711MuxTareButton)
@@ -86,7 +97,10 @@ async def to_code(config):
         CONF_ID: button_id,
         CONF_NAME: f"{config[CONF_NAME]} Tarieren",
         "icon": "mdi:scale-balance",
+        "device_class": "restart",
     })
-    
-    cg.add(btn_var.set_sensor(var))
     await button.register_button(btn_var, button_config)
+
+    # 3. Verknüpfungen herstellen
+    cg.add(btn_var.set_sensor(var))
+    cg.add(btn_var.set_unlock_switch(unlock_var))
