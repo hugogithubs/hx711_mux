@@ -47,6 +47,67 @@ Damit die Mathematik absolut fehlerfrei aufgeht, durchläuft jeder Messwert dies
 4. **Kalibrierung (YAML):** Das genullte Signal läuft in dein `calibrate_linear` und wird in Kilogramm umgerechnet.
 
 ---
+## 📦 Installation & Einbindung
+
+Du kannst diese Komponente entweder direkt über GitHub (empfohlen) oder lokal als Custom Component in dein ESPHome-Projekt einbinden.
+
+### Option 1: Einbindung direkt via GitHub (Empfohlen)
+Füge die Komponente über das `external_components`-Feature direkt aus diesem GitHub-Repository in deine ESPHome-YAML-Konfiguration ein. ESPHome lädt die Dateien dann beim Kompilieren automatisch im Hintergrund herunter.
+
+```yaml
+external_components:
+  - source:
+      type: git
+      url: https://github.com
+    components: [ hx711_mux ]
+```
+
+### Option 2: Lokale Einbindung (Entwickler-Modus)
+
+Wenn du den Code lokal bearbeiten oder offline kompilieren möchtest, kannst du den Komponenten-Ordner manuell in dein Verzeichnis kopieren. Damit die Einbindung auf Anhieb fehlerfrei funktioniert, musst du die Dateien exakt im folgenden Pfad ablegen:
+
+**Erforderlicher Dateipfad:**
+```text
+config\esphome\hx711_mux_local\hx711_mux\
+```
+
+Stelle sicher, dass sich in diesem Unterordner die drei folgenden Dateien befinden:
+*   `__init__.py`
+*   `sensor.py`
+*   `hx711_mux.h`
+
+Binde den lokalen Ordner anschließend wie folgt in deiner ESPHome-YAML-Konfiguration ein:
+
+```yaml
+external_components:
+  - source:
+      type: local
+      path: hx711_mux_local
+    components: [ hx711_mux ]
+```
+
+---
+
+### 🧩 Wichtige Framework-Abhängigkeiten (Voraussetzung)
+
+Damit ESPHome die C++ Klassen für die Sicherheits-Schalter (Template-Switch) und die automatischen Taster korrekt im Hintergrund einkompilieren kann, müssen die Komponenten `switch`, `template` und `button` **zwingend** mindestens einmal in deiner YAML-Datei erwähnt werden.
+
+Stelle sicher, dass diese Blöcke in deiner Konfiguration existieren:
+
+```yaml
+# Aktiviert das Button-Framework für die automatischen Tare-Taster
+button:
+
+# Aktiviert das Switch-Framework und das Template-System für die Verriegelung
+switch:
+  - platform: template
+    name: "Mux-Template-Aktivator"
+    id: mux_template_activator
+    internal: true
+    optimistic: true
+```
+
+
 
 ## 🚀 Konfigurations-Beispiel (Multi-Board Setup)
 
@@ -67,6 +128,14 @@ your_repository/
 ```yaml
 # Erforderlich, da die Buttons im Hintergrund miterzeugt werden
 button:
+
+# Erforderlich, um das Template-Framework für die Freigabe-Schalter zu aktivieren
+switch:
+  - platform: template
+    name: "Mux-Template-Aktivator"
+    id: mux_template_activator
+    internal: true
+    optimistic: true
 
 external_components:
   - source:
@@ -170,9 +239,9 @@ sensor:
             - 0 -> 0.00000
             - 2730 -> 0.22100  # Individueller Faktor für Zelle 4
 
-  # ------------------------------------------------------------------
-  # DREI SYNCHRONE SUMMEN-SENSOREN GLEICHZEITIG (PARALLEL)
-  # ------------------------------------------------------------------
+  # --------------------------------------------------------------------
+  # DREI SYNCHRONE SUMMEN-SENSOREN GLEICHZEITIG (PARALLEL) als Beispiel
+  # --------------------------------------------------------------------
   
   # Summe 1: Nur die Zellen von Board 1 (Kanal A + Kanal B)
   - platform: hx711_mux
@@ -206,26 +275,38 @@ sensor:
       - zelle_3_b2_ka
       - zelle_4_b2_kb
 
+
 ```
 
 ---
 
 ## 📋 Erzeugte Entitäten im Home Assistant
 
-Nach dem erfolgreichen Kompilieren und Einbinden stellt die Komponente vollautomatisch folgende Entitäten in Home Assistant zur Verfügung:
+Nach dem erfolgreichen Kompilieren stellt die Komponente vollautomatisch alle benötigten Steuerelemente und Messwerte im Home Assistant bereit. Bei Verwendung des obigen Beispiels entstehen folgende Entitäten:
 
-1. **Sensoren (Gewichte):**
-   * `sensor.zelle_1_board_1_kanal_a` (In kg)
-   * `sensor.zelle_2_board_1_kanal_b` (In kg)
-   * `sensor.zelle_3_board_2_kanal_a` (In kg)
-   * `sensor.zelle_4_board_2_kanal_b` (In kg)
-   * `sensor.zellen_gesamtgewicht_4_zellen` (Perfekt synchronisierte Summe aller 4 Zellen)
+### 1. 📊 Sensoren (Gewichte in kg)
+*   `sensor.zelle_1_board_1_kanal_a`
+*   `sensor.zelle_2_board_1_kanal_b`
+*   `sensor.zelle_3_board_2_kanal_a`
+*   `sensor.zelle_4_board_2_kanal_b`
+*   `sensor.gewicht_achse_1_board_1` (Teilsumme Board 1)
+*   `sensor.gewicht_achse_2_board_2` (Teilsumme Board 2)
+*   `sensor.cell_compression_gesamtgewicht_alle_4_zellen` (Perfekt synchrone Gesamtsumme)
 
-2. **Buttons (Tarieren):**
-   * `button.zelle_1_board_1_kanal_a_tarieren` (Setzt Zelle 1 im Flash auf Null)
-   * `button.zelle_2_board_1_kanal_b_tarieren` (Setzt Zelle 2 im Flash auf Null)
-   * `button.zelle_3_board_2_kanal_a_tarieren` (Setzt Zelle 3 im Flash auf Null)
-   * `button.zelle_4_board_2_kanal_b_tarieren` (Setzt Zelle 4 im Flash auf Null)
+### 2. 🔒 Sicherheits-Freigabeschalter (Schutz vor Fehlbedienung)
+Jede Einzelzelle erhält einen Schalter zur Verriegelung des Nullpunkts. Das Tarieren ist erst möglich, wenn der zugehörige Schalter manuell aktiviert wurde:
+*   `switch.zelle_1_board_1_kanal_a_freigabe`
+*   `switch.zelle_2_board_1_kanal_b_freigabe`
+*   `switch.zelle_3_board_2_kanal_a_freigabe`
+*   `switch.zelle_4_board_2_kanal_b_freigabe`
+
+### ⚖️ 3. Taster (Tarieren)
+Setzt nach erfolgreicher Freigabe die entsprechende Wägezelle im RAM und dauerhaft im Flash-Speicher (NVS) auf Null. Der zugehörige Freigabeschalter springt nach dem Betätigen sofort automatisch in den gesperrten Zustand zurück:
+*   `button.zelle_1_board_1_kanal_a_tarieren`
+*   `button.zelle_2_board_1_kanal_b_tarieren`
+*   `button.zelle_3_board_2_kanal_a_tarieren`
+*   `button.zelle_4_board_2_kanal_b_tarieren`
+
 
 ---
 
@@ -243,3 +324,16 @@ Dieses Projekt ist das Ergebnis einer intensiven Co-Entwicklung zwischen Mensch 
 *   **Code-Generierung & Dokumentation:** Maßgeschneidert programmiert, iteriert und dokumentiert mithilfe von KI-Assistenz.
 
 Durch dieses agile Zusammenspiel konnte die komplexe, tief verankerte Python- und C++ API von ESPHome in Rekordzeit adaptiert und eine hochperformante, fehlerfreie Multi-Board-Lösung geschaffen werden.
+
+--
+
+## ⚠️ Haftungsausschluss (Disclaimer)
+
+Dieses Projekt ist im Rahmen einer privaten Co-Entwicklung entstanden und dient ausschließlich zu Informations- und Bildungszwecken. 
+
+*   **Keine Garantie:** Der Code wird "wie besehen" (as is) bereitgestellt, ohne jegliche ausdrückliche oder implizite Zusicherung von Funktionalität, Genauigkeit oder Zuverlässigkeit.
+*   **Eigenverantwortung:** Die Nutzung dieser Komponente erfolgt vollständig auf eigene Gefahr und eigenes Risiko des Anwenders. 
+*   **Schadensersatz:** Der Autor übernimmt keinerlei Haftung für Schäden an Hardware (z. B. Batteriezellen, ESP32-Boards), Datenverluste, finanzielle Verluste oder Personenschäden, die durch die Nutzung, Fehlfunktion oder Modifikation dieses Codes entstehen.
+
+Besonders bei der Überwachung von kritischen Systemen wie Lithium-Eisenphosphat-Speichern (LiFePO4) ist der Anwender selbst dafür verantwortlich, zusätzliche, unabhängige Sicherheitsmechanismen (z. B. mechanische Überdruckventile oder softwareseitige Abschaltungen im BMS) einzurichten.
+
