@@ -28,6 +28,7 @@ CONFIG_SCHEMA = cv.typed_schema(
     {
         "cell": sensor.sensor_schema(
             HX711MuxSensor,
+            unit_of_measurement="kg",
             icon="mdi:weight-kilogram",
             state_class=STATE_CLASS_MEASUREMENT,
         ).extend(
@@ -41,6 +42,7 @@ CONFIG_SCHEMA = cv.typed_schema(
         
         "sum": sensor.sensor_schema(
             HX711MuxSumSensor,
+            unit_of_measurement="kg", 
             icon="mdi:weight-kilogram",
             state_class=STATE_CLASS_MEASUREMENT,
         ).extend(
