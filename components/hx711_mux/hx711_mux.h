@@ -90,6 +90,7 @@ class HX711MuxSensor : public sensor::Sensor, public Component {
   void perform_tare();
 
  protected:
+  void persist_tare_value();
   void handle_first_measurement(float raw_value);
   void handle_regular_measurement(float raw_value);
 

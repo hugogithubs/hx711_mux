@@ -207,8 +207,12 @@ void HX711MuxSensor::handle_regular_measurement(float raw_value) {
   this->publish_state(raw_value);
 }
 
-void HX711MuxSensor::perform_tare() {
+void HX711MuxSensor::persist_tare_value() {
   this->tare_logic_.perform_tare(this->last_filtered_ticks_);
+}
+
+void HX711MuxSensor::perform_tare() {
+  this->persist_tare_value();
   
   this->publish_state(this->last_live_raw_);
   ESP_LOGI(TAG, "'%s': Kanal erfolgreich tariert. Neuer Nullpunkt: %.0f Ticks", this->get_name().c_str(), this->tare_logic_.current_tare_value());
