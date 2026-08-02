@@ -28,10 +28,11 @@ class HX711MuxHub : public Component {
   void set_clk_pin(InternalGPIOPin *pin) { clk_pin_ = pin; }
   void set_dout_pin(InternalGPIOPin *pin) { dout_pin_ = pin; }
   void register_sensor(HX711MuxSensor *sensor) { sensors_.push_back(sensor); }
+  void set_channel_a_gain_high(bool is_high) { is_a_high_ = is_high; }
 
   void increment_initial_reads();
   void setup() override;
-  void loop() override;
+  void loop() override;  
 
  protected:
   void read_hardware_();
@@ -40,6 +41,7 @@ class HX711MuxHub : public Component {
   InternalGPIOPin *dout_pin_;
   uint32_t last_read_{0};
   int active_channel_{0};
+  bool is_a_high_{true};
   std::vector<HX711MuxSensor *> sensors_;
   
   uint32_t timeout_start_{0};

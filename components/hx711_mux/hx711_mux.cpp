@@ -12,9 +12,42 @@ void HX711MuxHub::setup() {
   clk_pin_->setup();
   dout_pin_->setup();
   clk_pin_->digital_write(false);
+  
+  // 1. Warten, bis der Chip nach dem Power-On bereit ist (DOUT geht auf LOW)
+  uint32_t start_w = millis();
+  while (dout_pin_->digital_read() == 1 && (millis() - start_w < 300)) {
+    delayMicroseconds(10);
+  }
+
+  // 2. Einmalige Initialisierungs-Pulse senden (Leerlauf-Synchronisation)
+  // Wir tun so, als würden wir Kanal B beenden, um Kanal A für den echten Start einzustellen!
+  {
+    InterruptLock lock;
+    // 24 Dummy-Datenbits takten, um den Chip-Zyklus zu durchlaufen
+    for (int i = 0; i < 24; i++) {
+      clk_pin_->digital_write(true);
+      delayMicroseconds(2);
+      clk_pin_->digital_write(false);
+      delayMicroseconds(2);
+    }
+
+    // Wenn Kanal A LOW (Gain 64) will (!is_a_high_), senden wir 3 Pulse. Wenn er HIGH (128) will, 1 Puls.
+    int sync_pulses = (!is_a_high_) ? 3 : 1;
+    
+    for (int i = 0; i < sync_pulses; i++) {
+      clk_pin_->digital_write(true);
+      delayMicroseconds(2);
+      clk_pin_->digital_write(false);
+      delayMicroseconds(2);
+    }
+  }
+
+  // 3. Jetzt steht die Hardware GARANTIERT bereit für Kanal A (mit deinem Wunsch-Gain!)
   active_channel_ = 0; 
   waiting_for_ready_ = false;
   initial_reads_completed_ = 0;
+  
+  ESP_LOGI(TAG, "HX711 Hardware erfolgreich auf Kanal A synchronisiert.");
 }
 
 void HX711MuxHub::loop() {
@@ -74,14 +107,22 @@ void HX711MuxHub::read_hardware_() {
     // 1. Die 24 Datenbits auslesen
     for (int i = 0; i < 24; i++) {
       clk_pin_->digital_write(true);
-      delayMicroseconds(1);
+      delayMicroseconds(2);
       value = (value << 1) | (dout_pin_->digital_read() ? 1 : 0);
       clk_pin_->digital_write(false);
-      delayMicroseconds(1); 
+      delayMicroseconds(2); 
     }
 
-    // 2. Die Extra-Pulse für den Kanalwechsel senden (Kanal 0 benötigt 2, Kanal 1 benötigt 1)
-    int extra_pulses = (active_channel_ == 0) ? 2 : 1;
+    // 2. Die Extra-Pulse für den Kanalwechsel senden 
+    int extra_pulses = 1;
+    if (active_channel_ == 0) {
+      // Wir beenden Kanal A -> Folgemessung ist IMMER fest Kanal B (Gain 32 / LOW)
+      extra_pulses = 2;
+    } else {
+      // Wir beenden Kanal B -> Folgemessung ist Kanal A (Entweder 1 Puls für HIGH oder 3 für LOW)
+      extra_pulses = is_a_high_ ? 1 : 3;
+    }
+       
     for (int i = 0; i < extra_pulses; i++) {
       clk_pin_->digital_write(true); 
       delayMicroseconds(2); 

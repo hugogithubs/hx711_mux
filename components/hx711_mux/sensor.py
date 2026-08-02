@@ -22,6 +22,7 @@ TemplateSwitch = cg.esphome_ns.namespace("template_").class_("TemplateSwitch", s
 
 CONF_HUB_ID = "hub_id"
 CONF_TRACKS = "tracks"
+CONF_GAIN = "gain"
 
 CONFIG_SCHEMA = cv.typed_schema(
     {
@@ -33,6 +34,8 @@ CONFIG_SCHEMA = cv.typed_schema(
             {
                 cv.Required(CONF_HUB_ID): cv.use_id(HX711MuxHub),
                 cv.Required(CONF_CHANNEL): cv.one_of("A", "B", upper=True),
+                # Wir setzen den Default wieder fest auf HIGH für das Schema
+                cv.Optional(CONF_GAIN, default="HIGH"): cv.one_of("HIGH", "LOW", upper=True),
             }
         ).extend(cv.COMPONENT_SCHEMA),
         
@@ -68,8 +71,14 @@ async def to_code(config):
     cg.add(var.set_hub(hub))
     cg.add(hub.register_sensor(var))
     
-    channel = 0 if config[CONF_CHANNEL] == "A" else 1
-    cg.add(var.set_channel(channel))
+    # Expliziter Text-Abgleich für den Kanal
+    if config[CONF_CHANNEL] == "A":
+        cg.add(var.set_channel(0))
+        # Wir setzen den Gain-Zustand DIREKT im übergeordneten Hardware-Hub!
+        cg.add(hub.set_channel_a_gain_high(config[CONF_GAIN] == "HIGH"))
+    else:
+        cg.add(var.set_channel(1))
+        # Kanal B berührt den Hub-Zustand überhaupt nicht
 
     # 1. Den Freigabe-Schalter direkt als TemplateSwitch erzeugen
     unlock_id = core.ID(f"{config[CONF_ID]}_tare_unlock", is_declaration=True, type=TemplateSwitch)
