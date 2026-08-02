@@ -101,6 +101,7 @@ class HX711MuxSensor : public sensor::Sensor, public Component {
 
   void set_hub(HX711MuxHub *hub) { hub_ = hub; }
   void set_channel(int channel) { target_channel_ = channel; }
+  int get_channel() const { return target_channel_; }
 
   void setup() override;
   void handle_raw_value(int current_channel, float raw_value);
@@ -116,8 +117,8 @@ class HX711MuxSensor : public sensor::Sensor, public Component {
   float current_tare_value() const { return tare_logic_.current_tare_value(); }
 
  protected:
-  HX711MuxHub *hub_;
-  int target_channel_;
+  HX711MuxHub *hub_{nullptr};
+  int target_channel_{-1};
   float last_live_raw_{0.0f};
   bool has_received_first_val_{false}; 
   
