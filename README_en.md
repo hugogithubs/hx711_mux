@@ -326,3 +326,5 @@ This repository hosts a private hobbyist development and is provided exclusively
 *   **Property and Personal Damages:** The author shall not be held liable for any claims, hardware defects (e.g., cell over-compression, degraded battery strings, fried ESP32 chips), data corruption, financial loss, or personal injuries resulting from the use, failure, or customization of this codebase.
 
 When setting up safety monitoring loops for hazardous setups like Lithium Iron Phosphate banks (LiFePO4), the user remains completely responsible for providing separate, non-software mechanical over-pressure overrides (e.g., hardware pressure release spring-venting) or physical trip relays alongside this automation.
+
+<!-- Test für Commit-Signierung -->
