@@ -4,66 +4,30 @@ namespace esphome {
 namespace hx711_mux {
 
 void HX711MuxHub::notify_warmup_sample_received() {
- this->initial_reads_completed_++; 
+  this->initial_reads_completed_++;
 }
 
 void HX711MuxHub::setup() {
   ESP_LOGI(TAG, "Initialisiere HX711 Mux Board GPIOs...");
-  clk_pin_->setup();
-  dout_pin_->setup();
-  clk_pin_->digital_write(false);
-  
-  // 1. Warten, bis der Chip nach dem Power-On bereit ist (DOUT geht auf LOW)
-  uint32_t start_w = millis();
-  while (dout_pin_->digital_read() == 1 && (millis() - start_w < 300)) {
-    delayMicroseconds(10);
-  }
+  this->initialize_pins_();
+  this->wait_for_chip_ready_();
+  this->send_initial_sync_pulses_();
 
-  // 2. Einmalige Initialisierungs-Pulse senden (Leerlauf-Synchronisation)
-  // Wir tun so, als würden wir Kanal B beenden, um Kanal A für den echten Start einzustellen!
-  {
-    InterruptLock lock;
-    // 24 Dummy-Datenbits takten, um den Chip-Zyklus zu durchlaufen
-    for (int i = 0; i < 24; i++) {
-      clk_pin_->digital_write(true);
-      delayMicroseconds(2);
-      clk_pin_->digital_write(false);
-      delayMicroseconds(2);
-    }
+  this->active_channel_ = 0;
+  this->waiting_for_ready_ = false;
+  this->initial_reads_completed_ = 0;
 
-    // Wenn Kanal A LOW (Gain 64) will (!is_a_high_), senden wir 3 Pulse. Wenn er HIGH (128) will, 1 Puls.
-    int sync_pulses = (!is_a_high_) ? 3 : 1;
-    
-    for (int i = 0; i < sync_pulses; i++) {
-      clk_pin_->digital_write(true);
-      delayMicroseconds(2);
-      clk_pin_->digital_write(false);
-      delayMicroseconds(2);
-    }
-  }
-
-  // 3. Jetzt steht die Hardware GARANTIERT bereit für Kanal A (mit deinem Wunsch-Gain!)
-  active_channel_ = 0; 
-  waiting_for_ready_ = false;
-  initial_reads_completed_ = 0;
-  
   ESP_LOGI(TAG, "HX711 Hardware erfolgreich auf Kanal A synchronisiert.");
 }
 
 void HX711MuxHub::loop() {
   uint32_t now = millis();
   
-  // Berechne die Ziel-Anzahl an Samples: z.B. 2 Sensoren * 20 Samples = 40 Gesamt-Samples
-  size_t required_total_samples = sensors_.size() * WARMUP_SAMPLES_PER_SENSOR;
-  
-  // Dynamischer Turbo-Takt: 500ms während des Warmups, danach 1000ms Normalbetrieb
-  uint32_t current_interval = (initial_reads_completed_ < required_total_samples) ? 500 : 1000;
-
-  if (waiting_for_ready_ || (now - last_read_ > current_interval)) {
-    if (!waiting_for_ready_) {
-      last_read_ = now; 
+  if (this->waiting_for_ready_ || (now - this->last_read_ > this->get_poll_interval_ms_())) {
+    if (!this->waiting_for_ready_) {
+      this->last_read_ = now;
     }
-    read_hardware_();
+    this->read_hardware_();
   }
 }
 
@@ -71,80 +35,134 @@ void HX711MuxHub::loop() {
 // REALISIERUNG DER HUB-LESEMETHODE
 // ====================================================================
 void HX711MuxHub::read_hardware_() {
-  if (dout_pin_->digital_read() == 1) {
-    if (!waiting_for_ready_) {
-      timeout_start_ = millis();
-      waiting_for_ready_ = true;
-      return;
-    }
-    
-    if (millis() - timeout_start_ > 250) {
-      // 1. Sicheren Hardware-Reset ausführen
-      clk_pin_->digital_write(true);
-      delayMicroseconds(70); // Länger als 60µs für Power-Down
-      clk_pin_->digital_write(false);
-      
-      // 2. Dem HX711 Zeit zum Aufwachen geben (min. 400µs laut Datenblatt)
-      delayMicroseconds(500); 
-      
-      // 3. Kanal synchronisieren (HX711 startet nach Reset IMMER auf Kanal A / 0)
-      active_channel_ = 0; 
-      waiting_for_ready_ = false; 
-      
-      ESP_LOGW(TAG, "Timeout beim Warten auf Data Ready! Hardware-Reset durchgeführt. Starte neu bei Kanal A.");
-      return;
-    }
+  if (!this->is_data_ready_()) {
     return;
   }
 
-  waiting_for_ready_ = false; 
-  uint32_t value = 0;
-
-  // Performanter RAII-Sperrblock
-  {
-    InterruptLock lock;
-
-    // 1. Die 24 Datenbits auslesen
-    for (int i = 0; i < 24; i++) {
-      clk_pin_->digital_write(true);
-      delayMicroseconds(2);
-      value = (value << 1) | (dout_pin_->digital_read() ? 1 : 0);
-      clk_pin_->digital_write(false);
-      delayMicroseconds(2); 
-    }
-
-    // 2. Die Extra-Pulse für den Kanalwechsel senden 
-    int extra_pulses = 1;
-    if (active_channel_ == 0) {
-      // Wir beenden Kanal A -> Folgemessung ist IMMER fest Kanal B (Gain 32 / LOW)
-      extra_pulses = 2;
-    } else {
-      // Wir beenden Kanal B -> Folgemessung ist Kanal A (Entweder 1 Puls für HIGH oder 3 für LOW)
-      extra_pulses = is_a_high_ ? 1 : 3;
-    }
-       
-    for (int i = 0; i < extra_pulses; i++) {
-      clk_pin_->digital_write(true); 
-      delayMicroseconds(2); 
-      clk_pin_->digital_write(false);
-      delayMicroseconds(2);
-    }
-  }
+  this->waiting_for_ready_ = false;
+  uint32_t value = this->read_raw_value_();
 
   // Vorzeichenererweiterung für 24-Bit-Zweierkomplement
   if (value & 0x800000ULL) {
     value |= 0xFF000000ULL;
   }
 
-  // 3. Erst HIER in ein echtes vorzeichenbehaftetes int32_t wandeln, 
-  // damit der (float)-Cast danach auch negative Werte erzeugt!
   int32_t final_value = static_cast<int32_t>(value);
+  this->dispatch_raw_value_(final_value);
+  this->active_channel_ = (this->active_channel_ == 0) ? 1 : 0;
+}
 
-  for (auto *sensor : sensors_) {
-    sensor->handle_raw_value(active_channel_, (float)final_value);
+uint32_t HX711MuxHub::required_total_samples_() const {
+  return static_cast<uint32_t>(this->sensors_.size() * WARMUP_SAMPLES_PER_SENSOR);
+}
+
+uint32_t HX711MuxHub::get_poll_interval_ms_() const {
+  return this->is_warmup_phase_() ? WARMUP_POLL_INTERVAL_MS : NORMAL_POLL_INTERVAL_MS;
+}
+
+bool HX711MuxHub::is_warmup_phase_() const {
+  return this->initial_reads_completed_ < this->required_total_samples_();
+}
+
+void HX711MuxHub::initialize_pins_() {
+  this->clk_pin_->setup();
+  this->dout_pin_->setup();
+  this->clk_pin_->digital_write(false);
+}
+
+void HX711MuxHub::wait_for_chip_ready_() {
+  uint32_t start_w = millis();
+  while (this->dout_pin_->digital_read() == 1 && (millis() - start_w < 300)) {
+    delayMicroseconds(10);
+  }
+}
+
+void HX711MuxHub::send_initial_sync_pulses_() {
+  InterruptLock lock;
+
+  for (int i = 0; i < 24; i++) {
+    this->clk_pin_->digital_write(true);
+    delayMicroseconds(2);
+    this->clk_pin_->digital_write(false);
+    delayMicroseconds(2);
   }
 
-  active_channel_ = (active_channel_ == 0) ? 1 : 0;
+  int sync_pulses = (!this->is_a_high_) ? 3 : 1;
+  for (int i = 0; i < sync_pulses; i++) {
+    this->clk_pin_->digital_write(true);
+    delayMicroseconds(2);
+    this->clk_pin_->digital_write(false);
+    delayMicroseconds(2);
+  }
+}
+
+bool HX711MuxHub::is_data_ready_() {
+  if (this->dout_pin_->digital_read() == 1) {
+    if (!this->waiting_for_ready_) {
+      this->timeout_start_ = millis();
+      this->waiting_for_ready_ = true;
+      return false;
+    }
+
+    if (millis() - this->timeout_start_ > DATA_READY_TIMEOUT_MS) {
+      this->handle_data_ready_timeout_();
+    }
+    return false;
+  }
+
+  return true;
+}
+
+void HX711MuxHub::handle_data_ready_timeout_() {
+  this->clk_pin_->digital_write(true);
+  delayMicroseconds(70);
+  this->clk_pin_->digital_write(false);
+  delayMicroseconds(500);
+  this->active_channel_ = 0;
+  this->waiting_for_ready_ = false;
+  ESP_LOGW(TAG, "Timeout beim Warten auf Data Ready! Hardware-Reset durchgeführt. Starte neu bei Kanal A.");
+}
+
+uint32_t HX711MuxHub::read_raw_value_() {
+  uint32_t value = 0;
+  {
+    InterruptLock lock;
+
+    for (int i = 0; i < 24; i++) {
+      this->clk_pin_->digital_write(true);
+      delayMicroseconds(2);
+      value = (value << 1) | (this->dout_pin_->digital_read() ? 1 : 0);
+      this->clk_pin_->digital_write(false);
+      delayMicroseconds(2);
+    }
+
+    this->send_channel_switch_pulses_();
+  }
+
+  return value;
+}
+
+int HX711MuxHub::get_channel_switch_pulse_count_() const {
+  if (this->active_channel_ == 0) {
+    return 2;
+  }
+  return this->is_a_high_ ? 1 : 3;
+}
+
+void HX711MuxHub::send_channel_switch_pulses_() {
+  int extra_pulses = this->get_channel_switch_pulse_count_();
+  for (int i = 0; i < extra_pulses; i++) {
+    this->clk_pin_->digital_write(true);
+    delayMicroseconds(2);
+    this->clk_pin_->digital_write(false);
+    delayMicroseconds(2);
+  }
+}
+
+void HX711MuxHub::dispatch_raw_value_(int32_t final_value) {
+  for (auto *sensor : this->sensors_) {
+    sensor->handle_raw_value(this->active_channel_, static_cast<float>(final_value));
+  }
 }
 
 void HX711MuxTareLogic::load() {

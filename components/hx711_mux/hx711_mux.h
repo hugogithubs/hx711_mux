@@ -32,8 +32,11 @@ class HX711MuxTareLogic {
   ESPPreferenceObject pref_;
 };
 
-// Pauschale für das schnelle Software-Warmup (20 Werte pro Sensor)
-static const size_t WARMUP_SAMPLES_PER_SENSOR = 20;
+// Timing- und Warmup-Konstanten
+static constexpr size_t WARMUP_SAMPLES_PER_SENSOR = 20;
+static constexpr uint32_t WARMUP_POLL_INTERVAL_MS = 500;
+static constexpr uint32_t NORMAL_POLL_INTERVAL_MS = 1000;
+static constexpr uint32_t DATA_READY_TIMEOUT_MS = 250;
 
 // ====================================================================
 // 1. DER HARDWARE-HUB
@@ -47,9 +50,23 @@ class HX711MuxHub : public Component {
 
   void notify_warmup_sample_received();
   void setup() override;
-  void loop() override;  
+  void loop() override;
 
  protected:
+  uint32_t required_total_samples_() const;
+  uint32_t get_poll_interval_ms_() const;
+  bool is_warmup_phase_() const;
+
+  void initialize_pins_();
+  void wait_for_chip_ready_();
+  void send_initial_sync_pulses_();
+  bool is_data_ready_();
+  void handle_data_ready_timeout_();
+  uint32_t read_raw_value_();
+  int get_channel_switch_pulse_count_() const;
+  void send_channel_switch_pulses_();
+  void dispatch_raw_value_(int32_t final_value);
+
   void read_hardware_();
 
   InternalGPIOPin *clk_pin_;
