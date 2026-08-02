@@ -29,10 +29,11 @@ A prime use case for this component is the mechanical stress and compression mon
 
 ## ✨ Features & What to Expect
 
-*   **True Dual-Channel Multiplexing:** Utilizes the physical channel-switching mechanism of the HX711 hardware to read Channel A (Gain 128) and Channel B (Gain 32) in rapid succession using the same two GPIO pins.
+*   * **True Dual-Channel Multiplexing (with selectable Gain):** Utilizes the hardware switching of the HX711 to read Channel A and Channel B alternately in a fast cycle using the same two pins. Due to hardware limitations, Channel B always runs fixed in the low-power Gain 32 mode (`LOW`). For Channel A, you can now switch between `HIGH` (Gain 128, default) and `LOW` (Gain 64) via the YAML interface. Case insensitivity is handled automatically.
 *   **Hardware Interrupt Protection (Anti-BMS-Jitter):** The critical bit-banging routine is temporarily protected against incoming interrupts on the ESP32 core (`portENTER_CRITICAL`). Measurements are *never* distorted by serial Modbus or BMS traffic.
 *   **🛡️ Automatic UI Frontend with Safety Lock:** The component automatically generates a corresponding `Tare` button **as well as an `Unlock` switch** for each connected load cell in Home Assistant. Taring is strictly blocked until the safety switch is manually toggled on. Once pressed, the switch automatically locks itself again to protect your flash memory (NVS) from excessive writes.
 *   **⏱️ Boot-Muting against Startup Jitter:** Upon system startup or after an Over-The-Air (OTA) update, the component mutes data transmission for the first 5 seconds. This allows your YAML filters to fill up with stable background values, effectively preventing temporary negative drops or spikes in your Home Assistant history plots.
+*   **⏱️ Boot Muting with dynamic Turbo Warmup:** Upon system boot or after an OTA update, the hub automatically switches to a fast 500ms interval (instead of 1000ms) until each sensor has collected exactly 20 raw samples. Data publishing is blocked during this warmup phase. This allows the filter chains to fill up instantly with stable values in the background, effectively preventing faulty spikes in the plot before the system transitions to normal one-second operational intervals.
 *   **Perfectly Synchronized Sum Sensor:** The mathematical sum sensor only publishes a new state once *all* tracked input cells have successfully refreshed their data within the same operational cycle. This completely eliminates artificial stepping or jitter on the total combined weight.
 *   **Multi-Instance Capable (N:M Hub):** Supports an arbitrary number of parallel HX711 amplifier boards hooked up to different GPIO pin sets.
 
@@ -40,11 +41,12 @@ A prime use case for this component is the mechanical stress and compression mon
 
 ## 🛠️ Technical Processing Order
 
-To ensure that the mathematics line up perfectly, every single raw measurement passes through this exact pipeline:
-1. **Hardware Read:** Completely untouched raw ticks are read via an optimized native C++ clock routing.
-2. **C++ Tare Filter:** The zero point stored inside the flash preference layer is directly subtracted from the raw ticks.
-3. **Smoothing (YAML):** The freshly tared ticks pass through your defined YAML filters (e.g., Median, Moving Average).
-4. **Calibration (YAML):** The smoothed and cleaned signal enters your `calibrate_linear` mapping to be scaled into actual kilograms or Newtons.
+Every single raw measurement passes through this exact pipeline:
+
+1. **Hardware-Read:** Raw ticks are read using an optimized C++ clock cycle.
+2. **Smoothing (YAML):** The raw ticks pass through your mathematical pre-filters first (e.g., `median` and `sliding_window_moving_average`) to eliminate any noise or outliers.
+3. **C++ Tare Filter:** The zero point stored in flash memory is subtracted from the already smoothed ticks.
+4. **Calibration (YAML):** The cleaned and tared signal runs into your `calibrate_linear` and is converted into kilograms.
 
 ---
 
@@ -161,6 +163,7 @@ sensor:
     id: zelle_1_b1_ka
     hub_id: hx711_hub_1
     channel: A
+    gain: "LOW"                # Optional parameter, "HIGH" / "LOW" (defaults to "HIGH" if omitted)
     accuracy_decimals: 5
     filters:
       - median:

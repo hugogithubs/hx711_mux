@@ -30,10 +30,13 @@ Ein typisches Szenario für den Einsatz dieser Komponente ist die mechanische Ü
 
 ## ✨ Features & Was dich erwartet
 
-*   **Echtes Dual-Channel Multiplexing:** Nutzt die Hardware-Umschaltung des HX711, um Kanal A (Gain 128) und Kanal B (Gain 32) im schnellen Wechsel über dieselben zwei Pins auszulesen.
+*  **Dual-Channel Multiplexing (mit wählbarem Gain):** Nutzt die Hardware-Umschaltung des HX711, um Kanal A und Kanal B im schnellen Wechsel über dieselben zwei Pins auszulesen. Kanal B läuft hardwarebedingt immer fest im Gain-32-Modus (`LOW`). Für Kanal A kann über das YAML-Interface zwischen `HIGH` (Gain 128, Standard) und `LOW` (Gain 64) umgeschaltet werden. Die Groß-/Kleinschreibung wird dabei automatisch abgefangen.
+
 *   **Hardware-Interrupt-Schutz (Anti-BMS-Jitter):** Der kritische Bit-Banging-Bereich wird im ESP32-Kern kurzzeitig gegen Interrupts gesperrt (`portENTER_CRITICAL`). Messungen werden *niemals* durch Modbus- oder serielle BMS-Abfragen verzerrt.
 *   **🛡️ Automatisches UI-Frontend mit Sicherheits-Sperre:** Die Komponente erzeugt im Home Assistant für jede Wägezelle vollautomatisch einen passenden `Tarieren`-Button **sowie einen `Freigabe`-Schalter**. Das Tarieren ist blockiert, bis die Freigabe manuell aktiviert wird. Nach dem Betätigen sperrt sich der Schalter zum Schutz deines Flash-Speichers (NVS) sofort wieder selbstständig.
-*   **⏱️ Boot-Muting gegen Einschalt-Jitter:** Beim Systemstart oder nach einem OTA-Update blockiert die Komponente die Datenweitergabe für die ersten 5 Sekunden. Die Filterketten können sich so im Hintergrund mit stabilen Werten füllen, wodurch Fehlmessungen im Plot effektiv verhindert werden.
+
+*   **⏱️ Boot-Muting mit dynamischem Turbo-Warmup:** Beim Systemstart oder nach einem OTA-Update schaltet der Hub automatisch in einen schnellen 500-ms-Takt (statt 1000 ms), bis jeder Sensor exakt 20 Rohwerte gesammelt hat. Während dieser Warmup-Phase wird die Datenweitergabe blockiert. Die Filterketten können sich so im Hintergrund mit stabilen Werten füllen, wodurch Fehlmessungen im Plot effektiv verhindert werden, bevor das System in den normalen Sekundentakt wechselt.
+
 *   **Perfekt synchronisierter Summen-Sensor:** Der mathematische Summen-Sensor rechnet erst ab, wenn *alle* beteiligten Zellen im selben Zyklus aktualisiert wurden. Das verhindert Jitter auf dem Gesamtgewicht.
 *   **Multi-Instanz-fähig (N:M Hub):** Unterstützt beliebig viele parallele HX711-Boards an unterschiedlichen Pins.
 
@@ -41,11 +44,12 @@ Ein typisches Szenario für den Einsatz dieser Komponente ist die mechanische Ü
 
 ## 🛠️ Technische Verarbeitungs-Reihenfolge
 
-Damit die Mathematik absolut fehlerfrei aufgeht, durchläuft jeder Messwert diese exakte Kette:
-1. **Hardware-Read:** Absolut unberührte Roh-Ticks werden per optimiertem C++ Takt ausgelesen.
-2. **C++ Tara-Filter:** Der im Flash gespeicherte Nullpunkt wird direkt von den Roh-Ticks abgezogen.
-3. **Glättung (YAML):** Die genullten Ticks durchlaufen deine Filter (z. B. Median, Moving Average).
-4. **Kalibrierung (YAML):** Das bereinigte Signal läuft in dein `calibrate_linear` und wird in Kilogramm umgerechnet.
+Jeder Messwert durchläuft diese Kette:
+1. **Hardware-Read:** Roh-Ticks werden ausgelesen.
+2. **Glättung (YAML):** Die Roh-Ticks durchlaufen zuerst deine mathematischen Vorfilter (z. B. `median` und `sliding_window_moving_average`), um Ausreißer zu eliminieren.
+3. **C++ Tara-Filter:** Der im Flash gespeicherte Nullpunkt wird von den bereits geglätteten Ticks abgezogen.
+4. **Kalibrierung (YAML):** Das bereinigte und genullte Signal läuft in dein `calibrate_linear` und wird in Kilogramm umgerechnet.
+
 
 ---
 
@@ -162,6 +166,7 @@ sensor:
     id: zelle_1_b1_ka
     hub_id: hx711_hub_1
     channel: A
+    gain: "LOW"    # optionaler Parameter,  "HIGH" / "LOW" (default "HIGH" wenn Parameter weggelassen wird)   
     accuracy_decimals: 5
     filters:
       - median:
