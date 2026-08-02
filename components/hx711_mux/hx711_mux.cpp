@@ -251,7 +251,16 @@ void HX711MuxTareButton::press_action() {
 }
 
 void HX711MuxSumSensor::add_sensor(HX711MuxSensor *sensor) {
-  tracked_sensors_.push_back(sensor);
+  // Die Sensoren nach Kanal sortiert ablegen, damit die Summe nur einmal pro Messrunde
+  // veröffentlicht wird, nämlich beim letzten Kanal der Runde.
+  size_t insert_at = tracked_sensors_.size();
+  for (size_t i = 0; i < tracked_sensors_.size(); ++i) {
+    if (tracked_sensors_[i]->get_channel() > sensor->get_channel()) {
+      insert_at = i;
+      break;
+    }
+  }
+  tracked_sensors_.insert(tracked_sensors_.begin() + insert_at, sensor);
   sensor->add_on_state_callback([this, sensor](float value) {
       this->on_sensor_update_(sensor, value);
   });
@@ -271,15 +280,17 @@ void HX711MuxSumSensor::on_sensor_update_(HX711MuxSensor *source, float value) {
     }
   }
 
-  // Wenn alle Kanäle bereit sind, Summe aus den aktuellsten Filterwerten bilden
-  if (ready) {
-    float gesamt_summe = 0.0f;
-    for (auto *s : tracked_sensors_) {
-      gesamt_summe += s->state;
-    }
-    
-    this->publish_state(gesamt_summe);
+  // Nur beim letzten Kanal der Runde die Summe berechnen.
+  if (!ready || source != tracked_sensors_.back()) {
+    return;
   }
+
+  float gesamt_summe = 0.0f;
+  for (auto *s : tracked_sensors_) {
+    gesamt_summe += s->state;
+  }
+  
+  this->publish_state(gesamt_summe);
 }
 
 }  // namespace hx711_mux
