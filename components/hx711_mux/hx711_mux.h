@@ -45,7 +45,7 @@ class HX711MuxHub : public Component {
   void register_sensor(HX711MuxSensor *sensor) { sensors_.push_back(sensor); }
   void set_channel_a_gain_high(bool is_high) { is_a_high_ = is_high; }
 
-  void increment_initial_reads();
+  void notify_warmup_sample_received();
   void setup() override;
   void loop() override;  
 

@@ -3,7 +3,7 @@
 namespace esphome {
 namespace hx711_mux {
 
-void HX711MuxHub::increment_initial_reads() {
+void HX711MuxHub::notify_warmup_sample_received() {
  this->initial_reads_completed_++; 
 }
 
@@ -197,13 +197,13 @@ void HX711MuxSensor::handle_first_measurement(float raw_value) {
   this->last_filtered_ticks_ = this->tare_logic_.apply(raw_value);
 
   // Dem Hub ein verarbeitetes Sample melden
-  this->hub_->increment_initial_reads();
+  this->hub_->notify_warmup_sample_received();
   ESP_LOGD(TAG, "'%s': Erster Warmup-Wert empfangen (%.0f). Publikation blockiert für Filter-Befüllung.", this->get_name().c_str(), raw_value);
 }
 
 void HX711MuxSensor::handle_regular_measurement(float raw_value) {
   // Inkrementiert das globale Sample-Tracking im Hub während der Turbo-Schleife
-  this->hub_->increment_initial_reads();
+  this->hub_->notify_warmup_sample_received();
   this->publish_state(raw_value);
 }
 
