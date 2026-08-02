@@ -17,6 +17,21 @@ namespace hx711_mux {
 static const char *const TAG = "hx711_mux";
 class HX711MuxSensor;
 
+class HX711MuxTareLogic {
+ public:
+  explicit HX711MuxTareLogic(HX711MuxSensor *sensor) : sensor_(sensor) {}
+
+  void load();
+  void perform_tare(float filtered_value);
+  float apply(float raw_value) const;
+  float current_tare_value() const { return tare_value_; }
+
+ private:
+  HX711MuxSensor *sensor_;
+  float tare_value_{0.0f};
+  ESPPreferenceObject pref_;
+};
+
 // Pauschale für das schnelle Software-Warmup (20 Werte pro Sensor)
 static const size_t WARMUP_SAMPLES_PER_SENSOR = 20;
 
@@ -75,16 +90,16 @@ class HX711MuxSensor : public sensor::Sensor, public Component {
   void perform_tare();
 
  public:
-  float tare_value_{0.0f};
   float last_filtered_ticks_{0.0f};
+  float current_tare_value() const { return tare_logic_.current_tare_value(); }
 
  protected:
   HX711MuxHub *hub_;
   int target_channel_;
   float last_live_raw_{0.0f};
-  ESPPreferenceObject pref_;
   bool has_received_first_val_{false}; 
   
+  HX711MuxTareLogic tare_logic_;
   MuxTareFilter tare_filter_; 
 };
 

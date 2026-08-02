@@ -147,20 +147,33 @@ void HX711MuxHub::read_hardware_() {
   active_channel_ = (active_channel_ == 0) ? 1 : 0;
 }
 
-optional<float> MuxTareFilter::new_value(float value) {
-  this->parent_->last_filtered_ticks_ = value;
-  return value - this->parent_->tare_value_;
+void HX711MuxTareLogic::load() {
+  this->pref_ = global_preferences->make_preference<float>(this->sensor_->get_object_id_hash());
+  if (!this->pref_.load(&this->tare_value_)) {
+    this->tare_value_ = 0.0f;
+  }
+  ESP_LOGI(TAG, "'%s': Geladener Tara-Nullpunkt aus dem Flash: %.0f Ticks", this->sensor_->get_name().c_str(), this->tare_value_);
 }
 
-HX711MuxSensor::HX711MuxSensor() : tare_filter_(this) {}
+void HX711MuxTareLogic::perform_tare(float filtered_value) {
+  this->tare_value_ = filtered_value;
+  this->pref_.save(&this->tare_value_);
+  global_preferences->sync();
+}
+
+float HX711MuxTareLogic::apply(float raw_value) const {
+  return raw_value - this->tare_value_;
+}
+
+optional<float> MuxTareFilter::new_value(float value) {
+  this->parent_->last_filtered_ticks_ = value;
+  return value - this->parent_->current_tare_value();
+}
+
+HX711MuxSensor::HX711MuxSensor() : tare_logic_(this), tare_filter_(this) {}
 
 void HX711MuxSensor::setup() {
-  this->pref_ = global_preferences->make_preference<float>(this->get_object_id_hash());
-  if (!this->pref_.load(&this->tare_value_)) {
-    this->tare_value_ = 0.0f; 
-  }
-  ESP_LOGI(TAG, "'%s': Geladener Tara-Nullpunkt aus dem Flash: %.0f Ticks", this->get_name().c_str(), this->tare_value_);
-
+  this->tare_logic_.load();
   this->add_filter(&this->tare_filter_);
 }
 
@@ -173,7 +186,7 @@ void HX711MuxSensor::handle_raw_value(int current_channel, float raw_value) {
       this->has_received_first_val_ = true;
       
       // Internen Zustand vorbefüllen, damit nachfolgende YAML-Filter gefüttert werden
-      this->last_filtered_ticks_ = raw_value - this->tare_value_;
+      this->last_filtered_ticks_ = this->tare_logic_.apply(raw_value);
       
       // Dem Hub ein verarbeitetes Sample melden
       this->hub_->increment_initial_reads();
@@ -189,12 +202,10 @@ void HX711MuxSensor::handle_raw_value(int current_channel, float raw_value) {
 }
 
 void HX711MuxSensor::perform_tare() {
-  this->tare_value_ = this->last_filtered_ticks_; 
-  this->pref_.save(&this->tare_value_);
-  global_preferences->sync();
+  this->tare_logic_.perform_tare(this->last_filtered_ticks_);
   
   this->publish_state(this->last_live_raw_);
-  ESP_LOGI(TAG, "'%s': Kanal erfolgreich tariert. Neuer Nullpunkt: %.0f Ticks", this->get_name().c_str(), this->tare_value_);
+  ESP_LOGI(TAG, "'%s': Kanal erfolgreich tariert. Neuer Nullpunkt: %.0f Ticks", this->get_name().c_str(), this->tare_logic_.current_tare_value());
 }
 
 void HX711MuxTareButton::press_action() {
