@@ -89,6 +89,10 @@ class HX711MuxSensor : public sensor::Sensor, public Component {
   void handle_raw_value(int current_channel, float raw_value);
   void perform_tare();
 
+ protected:
+  void handle_first_measurement(float raw_value);
+  void handle_regular_measurement(float raw_value);
+
  public:
   float last_filtered_ticks_{0.0f};
   float current_tare_value() const { return tare_logic_.current_tare_value(); }

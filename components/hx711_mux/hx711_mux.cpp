@@ -178,27 +178,33 @@ void HX711MuxSensor::setup() {
 }
 
 void HX711MuxSensor::handle_raw_value(int current_channel, float raw_value) {
-  if (current_channel == target_channel_) {
-    this->last_live_raw_ = raw_value; 
-    
-    // Zustand prüfen: Ist es der allererste Messwert dieses Kanals?
-    if (!this->has_received_first_val_) {
-      this->has_received_first_val_ = true;
-      
-      // Internen Zustand vorbefüllen, damit nachfolgende YAML-Filter gefüttert werden
-      this->last_filtered_ticks_ = this->tare_logic_.apply(raw_value);
-      
-      // Dem Hub ein verarbeitetes Sample melden
-      this->hub_->increment_initial_reads();
-      
-      ESP_LOGD(TAG, "'%s': Erster Warmup-Wert empfangen (%.0f). Publikation blockiert für Filter-Befüllung.", this->get_name().c_str(), raw_value);
-      return;
-    }
-
-    // Inkrementiert das globale Sample-Tracking im Hub während der Turbo-Schleife
-    this->hub_->increment_initial_reads();
-    this->publish_state(raw_value);   
+  if (current_channel != target_channel_) {
+    return;
   }
+
+  this->last_live_raw_ = raw_value;
+  if (!this->has_received_first_val_) {
+    this->has_received_first_val_ = true;
+    this->handle_first_measurement(raw_value);
+    return;
+  }
+
+  this->handle_regular_measurement(raw_value);
+}
+
+void HX711MuxSensor::handle_first_measurement(float raw_value) {
+  // Internen Zustand vorbefüllen, damit nachfolgende YAML-Filter gefüttert werden
+  this->last_filtered_ticks_ = this->tare_logic_.apply(raw_value);
+
+  // Dem Hub ein verarbeitetes Sample melden
+  this->hub_->increment_initial_reads();
+  ESP_LOGD(TAG, "'%s': Erster Warmup-Wert empfangen (%.0f). Publikation blockiert für Filter-Befüllung.", this->get_name().c_str(), raw_value);
+}
+
+void HX711MuxSensor::handle_regular_measurement(float raw_value) {
+  // Inkrementiert das globale Sample-Tracking im Hub während der Turbo-Schleife
+  this->hub_->increment_initial_reads();
+  this->publish_state(raw_value);
 }
 
 void HX711MuxSensor::perform_tare() {
