@@ -17,8 +17,26 @@ namespace hx711_mux {
 static const char *const TAG = "hx711_mux";
 class HX711MuxSensor;
 
-// Pauschale für das schnelle Software-Warmup (20 Werte pro Sensor)
-static const size_t WARMUP_SAMPLES_PER_SENSOR = 20;
+class HX711MuxTareLogic {
+ public:
+  explicit HX711MuxTareLogic(HX711MuxSensor *sensor) : sensor_(sensor) {}
+
+  void load();
+  void perform_tare(float filtered_value);
+  float apply(float raw_value) const;
+  float current_tare_value() const { return tare_value_; }
+
+ private:
+  HX711MuxSensor *sensor_;
+  float tare_value_{0.0f};
+  ESPPreferenceObject pref_;
+};
+
+// Timing- und Warmup-Konstanten
+static constexpr size_t WARMUP_SAMPLES_PER_SENSOR = 20;
+static constexpr uint32_t WARMUP_POLL_INTERVAL_MS = 500;
+static constexpr uint32_t NORMAL_POLL_INTERVAL_MS = 1000;
+static constexpr uint32_t DATA_READY_TIMEOUT_MS = 250;
 
 // ====================================================================
 // 1. DER HARDWARE-HUB
@@ -30,11 +48,25 @@ class HX711MuxHub : public Component {
   void register_sensor(HX711MuxSensor *sensor) { sensors_.push_back(sensor); }
   void set_channel_a_gain_high(bool is_high) { is_a_high_ = is_high; }
 
-  void increment_initial_reads();
+  void notify_warmup_sample_received();
   void setup() override;
-  void loop() override;  
+  void loop() override;
 
  protected:
+  uint32_t required_total_samples_() const;
+  uint32_t get_poll_interval_ms_() const;
+  bool is_warmup_phase_() const;
+
+  void initialize_pins_();
+  void wait_for_chip_ready_();
+  void send_initial_sync_pulses_();
+  bool is_data_ready_();
+  void handle_data_ready_timeout_();
+  uint32_t read_raw_value_();
+  int get_channel_switch_pulse_count_() const;
+  void send_channel_switch_pulses_();
+  void dispatch_raw_value_(int32_t final_value);
+
   void read_hardware_();
 
   InternalGPIOPin *clk_pin_;
@@ -69,22 +101,28 @@ class HX711MuxSensor : public sensor::Sensor, public Component {
 
   void set_hub(HX711MuxHub *hub) { hub_ = hub; }
   void set_channel(int channel) { target_channel_ = channel; }
+  int get_channel() const { return target_channel_; }
 
   void setup() override;
   void handle_raw_value(int current_channel, float raw_value);
   void perform_tare();
 
+ protected:
+  void persist_tare_value();
+  void handle_first_measurement(float raw_value);
+  void handle_regular_measurement(float raw_value);
+
  public:
-  float tare_value_{0.0f};
   float last_filtered_ticks_{0.0f};
+  float current_tare_value() const { return tare_logic_.current_tare_value(); }
 
  protected:
-  HX711MuxHub *hub_;
-  int target_channel_;
+  HX711MuxHub *hub_{nullptr};
+  int target_channel_{-1};
   float last_live_raw_{0.0f};
-  ESPPreferenceObject pref_;
   bool has_received_first_val_{false}; 
   
+  HX711MuxTareLogic tare_logic_;
   MuxTareFilter tare_filter_; 
 };
 
